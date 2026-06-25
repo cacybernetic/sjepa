@@ -110,12 +110,16 @@ def test_padding_mask_marks_real_frames():
     assert not mask[1, 6:].any()
 
 
-def test_block_mask_ratio_is_reasonable():
+def test_block_mask_ratio_matches_target():
     generator = BlockMaskGenerator(mask_ratio=0.65, mask_length=10)
-    mask = generator.generate(1, 200, [200], torch.device("cpu"))
-    ratio = mask.float().mean().item()
-    # The span method is random, so we only check a wide band around 0.65.
-    assert 0.3 < ratio < 0.95
+    # Average over many long sequences so the random spans even out. The mean
+    # masked fraction must sit close to the paper target of 0.65.
+    ratios = [
+        generator.generate(1, 600, [600], torch.device("cpu")).float().mean()
+        for _ in range(100)
+    ]
+    mean_ratio = float(torch.stack(ratios).mean())
+    assert 0.60 < mean_ratio < 0.72
 
 
 def test_block_mask_only_masks_real_frames():

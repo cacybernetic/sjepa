@@ -45,20 +45,38 @@ class BlockMaskGenerator:
         self.mask_ratio = mask_ratio
         self.mask_length = mask_length
 
-    def _num_spans(self, real_length):
-        """Compute how many spans to place for one utterance."""
-        spans = int(real_length * self.mask_ratio / self.mask_length)
-        return max(1, spans)
+    def _max_attempts(self, target):
+        """Bound the number of spans we try, so the loop always stops.
+
+        We may need extra spans because spans can overlap. This bound is large
+        enough to reach the target fraction, but it still stops the loop if the
+        target can never be reached.
+        """
+        spans_needed = target // self.mask_length + 1
+        return 4 * spans_needed + 16
 
     def _mask_one(self, mask_row, real_length):
-        """Mask spans inside a single row in place."""
+        """Mask spans inside a single row until the target fraction is met.
+
+        We keep adding spans until the masked count reaches the target. Spans
+        may overlap, so we count only the newly masked frames each time. A
+        counter stops the loop so it can never run forever.
+        """
         if real_length <= 0:
             return
+        target = int(real_length * self.mask_ratio)
+        if target <= 0:
+            return
         high = max(1, real_length - self.mask_length)
-        starts = torch.randint(0, high, (self._num_spans(real_length),))
-        for start in starts.tolist():
+        masked = 0
+        attempts = 0
+        max_attempts = self._max_attempts(target)
+        while masked < target and attempts < max_attempts:
+            start = int(torch.randint(0, high, (1,)).item())
             end = min(start + self.mask_length, real_length)
+            masked += int((~mask_row[start:end]).sum().item())
             mask_row[start:end] = True
+            attempts += 1
 
     @torch.no_grad()
     def generate(self, batch_size, num_frames, frame_lengths, device):
