@@ -1,0 +1,805 @@
+\documentclass[11pt,a4paper]{article}
+
+% ============================================================
+%  S-JEPA : explication complete et detaillee + FAQ
+%  Document pedagogique accompagnant la reimplementation
+%  de production (Python = entrainement, Rust = inference).
+% ============================================================
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=2.3cm]{geometry}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{mathtools}
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{listings}
+\usepackage{enumitem}
+
+\usepackage[colorlinks=true,linkcolor=blue!60!black,urlcolor=blue!50!black,
+            citecolor=blue!50!black]{hyperref}
+
+% --- Couleurs / boites ---
+\definecolor{warnbg}{RGB}{255,247,230}
+\definecolor{warnframe}{RGB}{200,120,0}
+\definecolor{faqbg}{RGB}{238,245,255}
+\definecolor{faqframe}{RGB}{40,90,170}
+\definecolor{codebg}{RGB}{245,245,245}
+
+\newtcolorbox{warnbox}{colback=warnbg,colframe=warnframe,boxrule=0.6pt,
+  arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt}
+
+\newtcolorbox{faqbox}{colback=faqbg,colframe=faqframe,boxrule=0.6pt,
+  arc=2pt,left=6pt,right=6pt,top=4pt,bottom=4pt}
+
+% --- Style code ---
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{gray!40},
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+}
+
+% --- Macro FAQ ---
+\newcommand{\faq}[2]{%
+  \par\medskip
+  \begin{faqbox}
+  \textbf{Q. #1}\par\smallskip
+  \textbf{R.} #2
+  \end{faqbox}
+}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\file}[1]{\texttt{#1}}
+
+\title{\textbf{S-JEPA : explication complète et détaillée}\\[0.4em]
+       \large \emph{Soft Clustering Anchors for Self-Supervised Speech
+       Representation Learning}\\[0.6em]
+       \normalsize Document pédagogique pour la réimplémentation de production}
+\author{Notes de travail --- dépôt \texttt{sjepa}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Ce document explique de bout en bout le papier \textbf{S-JEPA}
+(arXiv:2606.19398) et le codebase de référence fourni
+(\file{model.py}, \file{train.py}, \file{fit\_gmm.py}). Il relie
+chaque concept mathématique à sa ligne de code, recense les écarts
+entre le papier et le code de référence (importants pour une
+réimplémentation fidèle), puis répond à une large série de questions
+« bêtes mais légitimes » dans une FAQ. Objectif du dépôt :
+réimplémenter S-JEPA pour la production --- \textbf{entraînement en
+Python}, \textbf{inférence en Rust}.
+\end{abstract}
+
+\tableofcontents
+\bigskip\hrule
+
+% ============================================================
+\section{Vue d'ensemble en une page}
+% ============================================================
+
+\textbf{Le problème.} L'apprentissage auto-supervisé (SSL) de la parole
+est dominé par une recette unique (HuBERT, WavLM) : on clusterise des
+features acoustiques \emph{hors-ligne} par $k$-means, chaque frame reçoit
+un \emph{identifiant de cluster unique} (cible « dure »), puis on entraîne
+un encodeur à prédire cet ID aux positions masquées via une
+cross-entropy. On interrompt ensuite l'entraînement pour re-clusteriser
+tout le corpus sur des features intermédiaires, et on recommence.
+
+\textbf{Les deux défauts attaqués.}
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Assignation dure} : aux frontières de phonèmes, transitions
+  et silences, l'ambiguïté acoustique réelle est écrasée dans une seule
+  catégorie.
+  \item \textbf{Pipeline « stop-restart »} : re-clusteriser le corpus entier
+  entre itérations est coûteux et interrompt l'entraînement.
+\end{enumerate}
+
+\textbf{L'idée de S-JEPA.}
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Cibles douces} : la cible n'est plus un ID unique mais la
+  \emph{distribution postérieure complète d'un GMM} (Gaussian Mixture Model)
+  sur $K$ composantes.
+  \item \textbf{Loss = KL divergence} entre la prédiction et le postérieur GMM.
+  \item \textbf{GMM en ligne} en phase 2 : le GMM se met à jour en continu,
+  ce qui supprime le re-clustering hors-ligne.
+  \item \textbf{Architecture JEPA} : encodeur + prédicteur + tête de cluster,
+  avec un encodeur EMA pour alimenter le GMM en phase 2.
+\end{itemize}
+
+\textbf{Le résultat.} Avec un encodeur de 51.8M de paramètres, S-JEPA est
+la méthode SSL au plus faible WER sous 90M paramètres
+(\textbf{12.10\,\%} sur LibriSpeech \texttt{test-clean}, greedy CTC ;
+8.50\,\% avec LM) et égale HuBERT-Base en reconnaissance d'émotion à 55\,\%
+de ses paramètres.
+
+\begin{warnbox}
+\textbf{À retenir tout de suite.} Le codebase fourni ne contient que le
+\emph{pré-entraînement}. Il n'y a ni évaluation SUPERB, ni extraction de
+features, ni inférence. C'est exactement ce que notre projet doit
+construire (cf. §\ref{sec:gaps} et §\ref{sec:prod}).
+\end{warnbox}
+
+% ============================================================
+\section{Intuition : cibles dures contre cibles douces}
+% ============================================================
+
+Imaginons une frame audio située pile à la frontière entre deux sons,
+par exemple entre le « s » et le « t » de « \emph{st}op ». Acoustiquement,
+cette frame est \emph{ambiguë} : elle ressemble à 45\,\% au cluster « s »,
+à 40\,\% au cluster « t », et un peu à d'autres.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Cible dure (HuBERT)} : on force la frame dans \emph{une}
+  classe, disons « s ». L'information « cette frame est aussi presque un t »
+  est \emph{définitivement perdue}.
+  \item \textbf{Cible douce (S-JEPA)} : la cible est le vecteur
+  $[0.45, 0.40, 0.05, \dots]$. Le modèle apprend à reproduire toute la
+  distribution, donc \emph{l'ambiguïté est préservée}.
+\end{itemize}
+
+Le papier mesure ceci directement (§\ref{sec:analysis}) : sur les frames
+de parole réelles, l'entropie de la distribution prédite est
+\emph{bimodale} --- soit très confiante, soit en « égalité à deux » ---,
+et plus d'un tiers des frames portent plus d'un bit d'incertitude. C'est
+la preuve empirique que les cibles douces capturent une information que
+les cibles dures jetteraient.
+
+% ============================================================
+\section{La loss : KL entre prédiction et postérieur GMM}
+% ============================================================
+
+\subsection{Le postérieur d'un GMM diagonal}
+
+Un GMM à $K$ composantes et covariance \emph{diagonale} donne, pour un
+vecteur de features $m$, la probabilité a posteriori d'appartenir à la
+composante $k$ :
+\begin{equation}
+q_k(m) = \frac{\pi_k\,\mathcal{N}(m;\mu_k,\sigma_k^2)}
+              {\sum_j \pi_j\,\mathcal{N}(m;\mu_j,\sigma_j^2)}.
+\end{equation}
+En pratique on le calcule en espace log pour la stabilité numérique :
+\begin{equation}
+q_k(m) = \mathrm{softmax}_k\!\left(
+  \log\pi_k - \frac{D}{2}\log(2\pi)
+  - \frac{1}{2}\sum_{d=1}^{D}\Big[
+      \log\sigma_{k,d}^2 + \frac{(m_d-\mu_{k,d})^2}{\sigma_{k,d}^2}
+    \Big]\right).
+\label{eq:gmm_post}
+\end{equation}
+C'est \emph{exactement} ce qu'implémentent \code{GMMAssigner.posteriors}
+(\file{train.py:63}) et \code{OnlineGMM.posteriors} (\file{train.py:111}) :
+le terme $\sum_d (m_d-\mu_{k,d})^2/\sigma_{k,d}^2$ est la distance de
+Mahalanobis (\code{mahal}), $\sum_d\log\sigma_{k,d}^2$ est \code{log\_det},
+puis \code{logsumexp} normalise. Les variances sont « clampées » à
+$10^{-6}$. Le calcul est découpé en blocs (\emph{chunks}) de 500 pour
+borner la mémoire.
+
+\subsection{La fonction de coût}
+
+La loss est la divergence de Kullback--Leibler entre le postérieur GMM
+$q_t$ (la \emph{cible}, calculée sous \code{no\_grad}) et la sortie
+softmax du prédicteur $p_t$, moyennée sur un ensemble de positions $S$ :
+\begin{equation}
+\mathcal{L} = \frac{1}{|S|}\sum_{t\in S}\mathrm{KL}\big(q_t \,\|\, p_t\big),
+\qquad p_t = \mathrm{softmax}\big(g_\omega(\hat z_t)\big).
+\label{eq:loss}
+\end{equation}
+Dans le code (\file{train.py:833--841}) : \code{log\_pred\_mask =
+log\_softmax(logits)}, puis \code{F.kl\_div(log\_pred\_mask, target\_mask,
+reduction='batchmean')}. Seules les positions masquées contribuent au
+gradient (\code{loss = loss\_mask}) ; la KL sur positions visibles est
+calculée \emph{sous \code{no\_grad}} uniquement pour le logging.
+
+\begin{warnbox}
+\textbf{Sens de la KL et ordre des arguments.}
+\code{torch.nn.functional.kl\_div(input, target)} attend
+\code{input} en \emph{log}-probabilités et calcule
+$\sum target\cdot(\log target - input)$, soit $\mathrm{KL}(target\,\|\,
+\exp(input)) = \mathrm{KL}(q\,\|\,p)$. C'est bien la « forward KL » du
+papier : la cible $q$ (GMM) pondère l'erreur. À reproduire à l'identique
+en Rust pour garantir la parité numérique.
+\end{warnbox}
+
+% ============================================================
+\section{Architecture détaillée (\texorpdfstring{$\leftrightarrow$}{<->} \file{model.py})}
+% ============================================================
+
+L'architecture suit le pattern JEPA avec \textbf{trois composants
+entraînés} --- encodeur $f_\phi$, prédicteur $h_\psi$, tête de cluster
+$g_\omega$ --- plus un \textbf{encodeur EMA} $\bar f$ non entraîné
+(utilisé seulement en phase 2).
+
+\subsection{Le flux de données}
+
+\begin{lstlisting}
+waveform [B,1,T]
+  v
+ConvFeatureExtractor   7 blocs conv, stride total 320 -> frames 20 ms (50 Hz)
+  |  (model.py:30  kernels (10,5)(3,2)x4(2,2)x2, GELU, GroupNorm fp32 au 1er bloc)
+post_extract_proj (512->768) -> Fp32LayerNorm
+  |
+zerote les frames masquees  (l'encodeur ne voit RIEN aux positions masquees)
+  |  (model.py:209  x = x * mask.unsqueeze(-1))
+ConvPositionalEncoding (kernel 128, 16 groupes, weight-norm) -> encoder LayerNorm
+  |
+N x TransformerLayer (MHSA + FFN, post-norm, LayerNorm fp32)
+  |  z = f_phi(x)
+  +----------------------------+
+  |                            |
+cluster_head(z)          JEPAPredictor : injecte mask_token, ajoute pos_embed,
+-> logits "visibles"     1 couche Transformer -> z_hat
+(logges, NON supervises) puis cluster_head(z_hat) -> logits "masques"
+                              |
+                     KL( logits masques || posteriors GMM )   <- SEUL signal
+\end{lstlisting}
+
+\subsection{Les composants un par un}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{\code{ConvFeatureExtractor}} (\file{model.py:30}) : 7 conv
+  1D, kernels/strides identiques à HuBERT, stride total $=320$ échantillons
+  $\Rightarrow$ frames de 20\,ms à 16\,kHz (50\,Hz). GroupNorm fp32 au
+  premier bloc, GELU partout.
+
+  \item \textbf{\code{GradMultiply}} (\file{model.py:68}) : multiplie le
+  gradient du frontend CNN par \code{feature\_grad\_mult=0.1} pour
+  empêcher le frontend d'apprendre trop vite (repris de HuBERT).
+
+  \item \textbf{\code{ConvPositionalEncoding}} (\file{model.py:54}) :
+  encodage positionnel \emph{convolutionnel} (kernel 128, 16 groupes,
+  \code{weight\_norm}) ajouté avant la pile de transformers.
+
+  \item \textbf{\code{TransformerLayer}} (\file{model.py:78}) : attention
+  multi-têtes + FFN, \textbf{post-norm}, LayerNorm forcé en fp32
+  (\code{Fp32LayerNorm}) pour la stabilité en précision mixte.
+
+  \item \textbf{\code{OnlineEncoder}} (\file{model.py:169}) : assemble tout.
+  Contient aussi \code{cluster\_head} (MLP $768\!\to\!768\!\to\!768\!\to\!K$)
+  et \code{predictor}.
+
+  \item \textbf{\code{JEPAPredictor}} (\file{model.py:119}) : \code{mask\_token}
+  apprenable injecté aux positions masquées, \code{pos\_embed} (capacité 750
+  frames $=15$\,s), \textbf{une seule} couche \code{TransformerEncoderLayer}
+  (8 têtes, FFN $=1536$), puis \code{proj}. Il ne remplit \emph{que} les
+  positions masquées.
+
+  \item \textbf{\code{cluster\_head}} : MLP partagé entre chemin visible et
+  masqué, mais seul le chemin masqué entre dans la loss.
+\end{itemize}
+
+\subsection{Convention de masque : attention au piège}
+
+\begin{warnbox}
+Dans le \emph{code}, \code{mask} vaut \textbf{1 = visible, 0 = masqué}
+(\file{train.py:812} : \code{mask = (\textasciitilde mask\_bool).float()}),
+ce qui est l'\emph{inverse} de la notation du papier. L'encodeur fait
+\code{x = x * mask.unsqueeze(-1)} : il met donc à zéro les positions
+\emph{masquées}. Le \code{mask\_token} n'est injecté que plus tard, par le
+prédicteur. À fixer comme convention unique et documentée dans notre
+réimplémentation.
+\end{warnbox}
+
+% ============================================================
+\section{Les cibles : le GMM en phase 1 et en phase 2}
+% ============================================================
+
+\subsection{Phase 1 --- GMM figé sur MFCC (\file{fit\_gmm.py})}
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Features} : 39-dim MFCC = 13 coefficients cepstraux $+\ \Delta\ +\
+  \Delta\Delta$ (\code{extract\_mfcc}, \file{fit\_gmm.py:254}), frames 20\,ms.
+  \item \textbf{Reservoir sampling} (\code{collect\_features},
+  \file{fit\_gmm.py:266}) : échantillonne les frames en flux sans tout charger
+  en mémoire (algorithme de Vitter).
+  \item \textbf{Init $k$-means} (\code{gmm\_init\_kmeans},
+  \file{fit\_gmm.py:313}, 5 itérations) puis \textbf{EM}
+  (\code{fit\_gmm\_em}, \file{fit\_gmm.py:378}, 20 itérations). Statistiques
+  suffisantes accumulées par chunks ; jamais la matrice $N\times K$ entière.
+  \item \textbf{Sortie} : \file{gmm.pt} $=\{$means, variances, weights, $K$,
+  dim$\}$. $K=100$ dans le papier.
+  \item Le GMM est ensuite \textbf{figé} pendant toute la phase 1.
+\end{itemize}
+
+\subsection{Phase 2 --- GMM en ligne sur features de l'encodeur EMA}
+
+\code{OnlineGMM} (\file{train.py:90}) :
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Features} : 768-dim, sortie de l'encodeur EMA $\bar f$ à la
+  couche active $\ell^\star$.
+  \item \textbf{Mise à jour} (\code{OnlineGMM.update}, \file{train.py:134}) :
+  à chaque batch on calcule des moyennes/variances/poids \emph{pondérés par
+  les responsabilités} $q_{n,k}$, puis une mise à jour EMA :
+  \begin{equation}
+  \theta \leftarrow \alpha\,\theta + (1-\alpha)\,\hat\theta,
+  \qquad \theta \in \{\pi,\mu,\sigma^2\},\quad \alpha = \texttt{param\_ema} = 0.999.
+  \end{equation}
+  \item \textbf{Aucun gradient ne traverse le GMM.} Coût $O(B\cdot K\cdot D)$
+  par pas, intégré dans la passe forward $\Rightarrow$ pas de re-clustering
+  hors-ligne.
+  \item \textbf{Seeding} (\file{train.py:610--737}) : au début de la phase 2,
+  le GMM est initialisé par un mini-batch $k$-means (Sculley 2010) sur les
+  features de l'encodeur EMA, puis broadcasté à tous les rangs.
+\end{itemize}
+
+% ============================================================
+\section{L'entraînement en deux phases}
+% ============================================================
+
+Les deux phases forment \textbf{une seule trajectoire d'optimisation
+continue}, mais sont lancées comme \textbf{deux exécutions} du même
+\file{train.py}.
+
+\begin{center}
+\begin{tabular}{@{}p{0.46\textwidth}p{0.46\textwidth}@{}}
+\toprule
+\textbf{Phase 1 (GMM MFCC figé)} & \textbf{Phase 2 (GMM en ligne)} \\
+\midrule
+\code{--gmm\_path gmm\_mfcc.pt}, sans \code{--online\_gmm} &
+\code{--online\_gmm --reseed\_gmm --K 500}, repart de \code{--pt\_ckpt} \\
+Cibles = GMM MFCC figé &
+Cibles = GMM en ligne sur features EMA \\
+Loss sur masqué \emph{+} visible &
+Loss masqué+visible (début) puis masqué seul \\
+Augmentation activée ($p=0.25$) &
+Augmentation activée puis désactivée \\
+$K=100$, LR $=10^{-4}$ &
+$K=500$, LR $=2.5\times10^{-5}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{Les trois innovations de la phase 2}
+% ============================================================
+
+Ce sont les vraies contributions techniques : elles remplacent le
+stop-restart de HuBERT par un entraînement continu.
+
+\subsection{(a) GMM en ligne}
+Décrit ci-dessus. Supprime la passe de re-labellisation du corpus entier
+entre itérations.
+
+\subsection{(b) Sélection adaptative de couche par \emph{effective rank}}
+
+Quelle couche du transformer alimente le GMM ? HuBERT la choisit à la
+main ; S-JEPA l'automatise via le \textbf{rang effectif} :
+\begin{equation}
+\mathrm{erank}(Z) = \exp\!\Big(-\sum_i p_i\log p_i\Big),
+\qquad p_i = \frac{\sigma_i}{\sum_j \sigma_j},
+\end{equation}
+où les $\sigma_i$ sont les valeurs singulières d'un batch de 2000
+embeddings centrés. C'est l'exponentielle de l'entropie de Shannon du
+spectre : élevé quand beaucoup de valeurs singulières sont comparables
+(représentation « riche »). Implémentation : \file{train.py:886--912}
+(\code{torch.linalg.svdvals}, normalisation, entropie, lissage EMA, puis
+\code{argmax}). Observé : $\ell^\star=2$ en fin de phase 1, puis transition
+vers $\ell^\star=4$ au milieu de la phase 2.
+
+\subsection{(c) Décroissance EMA périodiquement commutée (\emph{switched EMA})}
+
+Tension fondamentale : l'encodeur EMA \emph{alimente} le GMM, dont les
+composantes sont estimées sur ces mêmes features.
+\begin{itemize}[leftmargin=*]
+  \item EMA trop lente $\Rightarrow$ le GMM ne voit jamais les améliorations
+  récentes de l'encodeur.
+  \item EMA trop rapide $\Rightarrow$ la distribution cible bouge à chaque pas.
+\end{itemize}
+Solution : alterner entre deux valeurs fixes,
+\begin{equation}
+\alpha_t \in \{\alpha_{\text{fast}}=0.999,\ \alpha_{\text{slow}}=0.9999\},
+\qquad \bar\phi \leftarrow \alpha_t\,\bar\phi + (1-\alpha_t)\,\phi,
+\end{equation}
+avec une cadence moyenne d'environ 20\,000 pas. C'est l'\textbf{analogue
+continu} du re-cluster hors-ligne : phase rapide = « le GMM rattrape
+l'encodeur » ; phase lente = « cible stable, l'encodeur apprend contre
+elle ». Échelles caractéristiques : $\tau(\alpha)=1/(1-\alpha)$, soit
+$1\,000$ pas (fast) et $10\,000$ pas (slow).
+
+% ============================================================
+\section{L'algorithme complet (Algorithm 1)}
+% ============================================================
+
+Correspondance directe avec la boucle \file{train.py:746--960} :
+
+\begin{lstlisting}
+Init: f_phi, h_psi, g_omega, encodeur EMA f_bar, GMM, couche ell*, alpha <- alpha_fast
+Pour chaque minibatch x :
+   x_aug, x_clean <- Augment(x)                          # train.py:781
+   m <- MFCC(x_clean)  [Ph.1]  ou  f_bar(x_clean) a ell* [Ph.2]   (no_grad)
+   q <- GMM.posterior(m)                                 # :795 / :806
+   si Phase 2 :
+       GMM <- EMA-update depuis m, q                     # :860 (online, no grad)
+       si pas de verif-couche : ell* <- argmax_l erank(Z^l)  # :886-912
+   mask <- SampleBlockMask()                             # :811
+   z <- f_phi(x_aug, mask) ;  z_hat <- h_psi(z, mask)    # :815
+   p_t <- softmax(g_omega(z_hat_t)) pour t dans M
+   L <- (1/|M|) somme KL(q_t || p_t) ; backward ; step   # :837-849
+   si Phase 2 : flip alpha ; f_bar <- alpha f_bar + (1-alpha) f_phi  # :856-857
+Retour: f_phi   (predicteur, cluster_head, GMM jetes)
+\end{lstlisting}
+
+\textbf{Masquage par blocs} (\code{compute\_mask\_indices},
+\file{train.py:362}) : on tire \code{num\_spans} spans de 10 frames jusqu'à
+viser un ratio de 0.65. La variante rapide ne garantit pas exactement
+0.65 (chevauchements possibles) ; une variante exacte \code{\_slow} existe
+en \file{train.py:348}.
+
+% ============================================================
+\section{Infrastructure d'entraînement (orientée production)}
+% ============================================================
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{DeepSpeed} pour le multi-GPU (8 GPU, batch global 192),
+  config \file{ds\_config\_jepa\_pretrain.json}.
+  \item \textbf{Données} : manifests JSONL \code{\{"wav\_path": ...\}}, lus en
+  streaming (\code{StreamingDataset}, \file{train.py:243}). Un
+  \file{path\_index.txt} globalement mélangé est construit une seule fois sur
+  rank 0 ; chaque worker lit des slices disjointes (\code{i \% total == wid}).
+  \item \textbf{Checkpoint portable} (\file{portable\_step*.pt},
+  \file{train.py:917--942}) : bundle \{encodeur online, encodeur EMA, params
+  GMM, step\}, agnostique du framework, écrit dans un thread daemon pour ne
+  pas bloquer l'entraînement.
+  \item \textbf{Augmentation} (\code{DenoiseAugmentor}, \file{train.py:190}) :
+  noise mixing au SNR + utterance mixing, suivant WavLM. Le GMM voit le
+  signal \emph{propre}, l'encodeur voit le signal \emph{augmenté}.
+\end{itemize}
+
+% ============================================================
+\section{Évaluation et résultats}
+% ============================================================
+
+Protocole \textbf{SUPERB} : encodeur \emph{gelé}, on entraîne de petites
+têtes par tâche.
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Tâche} & \textbf{S-JEPA (51.8M)} & \textbf{Comparaison} \\
+\midrule
+ASR (WER test-clean) & \textbf{12.10\,\%} greedy ; 8.50\,\% +LM
+  & meilleur SSL $<$90M (DeCoAR 2.0 : 13.02\,\% à 89.8M) \\
+Émotion (ER, acc.)   & \textbf{64.83\,\%}
+  & $\approx$ HuBERT-Base (64.92\,\%) à 55\,\% des params \\
+Slot Filling (F1/CER) & 83.05 / 33.17
+  & $\approx$ DeCoAR 2.0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Plus du \textbf{probing} (sondes linéaires/MLP sur représentations gelées) :
+S-JEPA domine Speaker ID, Gender, Chapter ID, et gagne en Phoneme avec une
+sonde MLP. Conclusion : nouvelle \textbf{frontière de Pareto sous 90M
+paramètres}, sans \emph{teacher} ni re-clustering hors-ligne.
+
+% ============================================================
+\section{L'analyse centrale : l'entropie bimodale}
+\label{sec:analysis}
+% ============================================================
+
+Le résultat empirique qui justifie les cibles douces : sur $\sim$153\,000
+frames held-out, l'entropie par frame de la prédiction
+\begin{equation}
+H_t = -\sum_{k=1}^{K} p_{t,k}\log_2 p_{t,k} \in [0, \log_2 K]
+\end{equation}
+est \textbf{bimodale} :
+\begin{itemize}[leftmargin=*]
+  \item un mode confiant $< 0.3$ bit (régions phonétiquement stables) ;
+  \item un mode secondaire $\approx 1$ bit = égalité parfaite à deux clusters
+  (frontières acoustiques) ;
+  \item \textbf{36.6\,\%} des frames portent plus de 1 bit.
+\end{itemize}
+Lecture en bits : $H=1$ bit = égalité 50/50 ; $H=2$ bits = uniforme à
+quatre ; $H=\log_2 500\approx 9$ bits = uniforme sur tous les clusters
+(jamais atteint). La bimodalité est l'observation « porteuse » : ce n'est
+ni du flou diffus (qui serait unimodal), ni un repli dégénéré vers
+l'uniforme (qui s'empilerait à $\log_2 K$).
+
+% ============================================================
+\section{Écarts entre le papier et le code de référence}
+\label{sec:gaps}
+% ============================================================
+
+Cruciaux pour une réimplémentation \emph{fidèle au papier}.
+
+\begin{center}
+\begin{tabular}{@{}p{0.30\textwidth}p{0.30\textwidth}p{0.30\textwidth}@{}}
+\toprule
+\textbf{Élément} & \textbf{Papier} & \textbf{Code fourni} \\
+\midrule
+Couches encodeur & 6 (51.8M) & default 12 ; \code{--num\_layers 6} possible \\
+Switched EMA ($\alpha_\text{fast}/\alpha_\text{slow}$)
+  & spécifié en détail & \textbf{absent} (\code{--ema\_decay} fixe) \\
+Transition loss vis+masq $\to$ masqué seul
+  & décrite (annexe) & code n'a \textbf{que} masqué (\code{loss = loss\_mask}) \\
+Eval SUPERB / inférence & résultats reportés & \textbf{non fourni} \\
+$K$ phase 1 / phase 2 & 100 / 500 & configurable (\code{--K}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{Plan de réimplémentation de production}
+\label{sec:prod}
+% ============================================================
+
+\textbf{Décision arrêtée :} \emph{entraînement en Python, inférence en
+Rust}.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Python (entraînement + recherche)} : package modulaire
+  reprenant \file{fit\_gmm.py}, \file{train.py}, \file{model.py},
+  enrichi des éléments manquants (6 couches, switched EMA, transition de
+  loss), testé, avec configs et reprise propre. Production des checkpoints
+  portables.
+  \item \textbf{Rust (inférence + serving)} : moteur d'inférence
+  haute-performance chargeant le checkpoint portable (encodeur seul --- le
+  prédicteur, la tête de cluster et le GMM sont jetés après
+  pré-entraînement). Pistes : \code{tch} (bindings libtorch) ou
+  \code{candle}. Tests de \textbf{parité numérique} contre la sortie
+  Python.
+  \item \textbf{Évaluation} : à construire (extraction de features gelées +
+  têtes SUPERB / probing). Peut rester en Python dans un premier temps.
+\end{itemize}
+
+% ============================================================
+\section{FAQ --- questions « bêtes » mais légitimes}
+% ============================================================
+
+\subsection{Concepts généraux}
+
+\faq{C'est quoi « auto-supervisé » (SSL) au juste ?}{%
+On entraîne le modèle \emph{sans étiquettes humaines}. Le signal
+d'apprentissage est fabriqué à partir des données elles-mêmes : ici, on
+masque des morceaux du signal et on demande au modèle de prédire ce qui
+manque (dans un espace de features, pas le son brut). Aucune transcription
+n'est nécessaire pour le pré-entraînement.}
+
+\faq{Que signifie « JEPA » ?}{%
+\emph{Joint-Embedding Predictive Architecture}. On ne prédit pas les pixels
+ou les échantillons audio bruts, mais une \emph{représentation} (embedding)
+de la partie masquée. Un encodeur encode le contexte visible, un prédicteur
+« remplit » les positions masquées dans l'espace latent.}
+
+\faq{Pourquoi prédire dans l'espace latent plutôt que reconstruire le son ?}{%
+Reconstruire le signal brut force le modèle à modéliser des détails non
+pertinents (bruit de fond, phase exacte). Prédire une représentation laisse
+le modèle se concentrer sur la structure utile (contenu phonétique,
+prosodie).}
+
+\faq{C'est quoi un GMM, expliqué simplement ?}{%
+Un \emph{Gaussian Mixture Model} suppose que les données sont générées par
+un mélange de $K$ « bulles » gaussiennes. Chaque bulle a un centre
+($\mu_k$), une largeur ($\sigma_k^2$) et un poids ($\pi_k$). Le
+\emph{postérieur} donne, pour un point, la probabilité d'appartenir à
+chaque bulle. C'est un $k$-means « mou » qui rend des probabilités au lieu
+d'un seul gagnant.}
+
+\faq{Quelle différence concrète entre $k$-means et GMM ici ?}{%
+$k$-means assigne chaque point à \emph{un} cluster (cible dure). Le GMM
+rend une \emph{distribution} sur tous les clusters (cible douce). C'est
+exactement le cœur de S-JEPA : remplacer la cible dure de HuBERT par la
+cible douce du GMM.}
+
+\faq{Pourquoi « covariance diagonale » et pas complète ?}{%
+Une covariance complète a $D^2$ paramètres par composante (ici $768^2$),
+trop coûteux et instable. Diagonale = on suppose les dimensions
+indépendantes, $D$ paramètres par composante. Standard pour la parole, et
+le postérieur a une forme close simple (Eq.~\ref{eq:gmm_post}).}
+
+\faq{C'est quoi la divergence KL, en une phrase ?}{%
+Une mesure d'écart entre deux distributions de probabilité.
+$\mathrm{KL}(q\,\|\,p)=0$ si et seulement si $q=p$, et grandit quand $p$
+s'éloigne de la cible $q$. Minimiser la KL, c'est rendre la prédiction $p$
+aussi proche que possible de la cible $q$.}
+
+\subsection{Architecture et masquage}
+
+\faq{Pourquoi des frames de 20 ms ?}{%
+Le frontend CNN a un stride total de 320 échantillons. À 16\,kHz,
+$320/16000 = 20$\,ms par frame, soit un débit de 50 frames/seconde. C'est
+le standard HuBERT/wav2vec et un bon compromis pour la parole.}
+
+\faq{Pourquoi mettre les frames masquées à zéro \emph{avant} le transformer,
+mais injecter le mask token \emph{après} (dans le prédicteur) ?}{%
+L'encodeur doit produire une représentation du \emph{contexte visible}
+seulement. Si on lui donnait déjà un mask token, il « tricherait ». Le
+prédicteur, lui, reçoit le contexte encodé et doit \emph{deviner} le
+contenu masqué : c'est là qu'on place le mask token apprenable.}
+
+\faq{Pourquoi multiplier le gradient du CNN par 0.1 ?}{%
+Le frontend convolutionnel apprend très vite et peut déstabiliser
+l'entraînement. Réduire son gradient ($\gamma_\text{feat}=0.1$) le fait
+évoluer plus lentement que les transformers. Astuce héritée de HuBERT.}
+
+\faq{Pourquoi un encodage positionnel \emph{convolutionnel} plutôt que
+sinusoïdal ?}{%
+Pour la parole, une convolution capture les positions \emph{relatives} de
+façon souple et performe mieux empiriquement que les positions absolues
+sinusoïdales. C'est le choix de wav2vec~2.0 / HuBERT.}
+
+\faq{Le prédicteur n'a qu'\emph{une} couche transformer, ce n'est pas
+trop peu ?}{%
+C'est volontaire : le prédicteur est un module \emph{léger et jetable}.
+Tout le travail représentationnel doit être fait par l'encodeur, qui est
+le seul composant conservé après pré-entraînement.}
+
+\faq{Pourquoi 65\,\% de masquage, c'est énorme, non ?}{%
+Oui, et c'est voulu : un masquage élevé rend la tâche difficile et force
+l'encodeur à apprendre une vraie structure plutôt qu'une interpolation
+locale. 65\,\% avec des spans de 10 frames est la valeur HuBERT.}
+
+\subsection{Encodeur EMA et phase 2}
+
+\faq{C'est quoi l'encodeur EMA et pourquoi en a-t-on besoin ?}{%
+C'est une copie « lente » de l'encodeur, dont les poids sont une moyenne
+mobile exponentielle de l'encodeur entraîné. En phase 2, il fournit des
+features \emph{stables} sur lesquelles le GMM est ajusté. Sans cela, le GMM
+poursuivrait une cible qui bouge à chaque pas (instable).}
+
+\faq{Si le GMM dépend de l'encodeur et que l'encodeur apprend contre le
+GMM, n'est-ce pas circulaire / risque d'effondrement ?}{%
+C'est exactement la tension que gère la \emph{switched EMA} : en alternant
+une phase « rapide » (le GMM rattrape l'encodeur) et une phase « lente »
+(cible figée, l'encodeur apprend contre elle), on évite que les deux
+dérivent ensemble vers une solution dégénérée. L'EMA et le \code{no\_grad}
+sur le GMM brisent la boucle de rétroaction directe.}
+
+\faq{Pourquoi le GMM ne reçoit-il aucun gradient ?}{%
+Le GMM est une \emph{cible}, pas un paramètre à optimiser par descente de
+gradient. Ses paramètres bougent par mise à jour EMA des statistiques
+suffisantes (moyennes/variances pondérées). Laisser un gradient le
+traverser créerait un raccourci trivial vers l'effondrement.}
+
+\faq{C'est quoi le \emph{rang effectif} et pourquoi ça aide à choisir une
+couche ?}{%
+C'est une mesure de « richesse » d'une représentation : si les directions
+principales (valeurs singulières) sont nombreuses et équilibrées, le rang
+effectif est élevé (l'information est étalée sur beaucoup de dimensions).
+Une couche à haut rang effectif tend à mieux séparer les sons, d'où son
+choix comme entrée du GMM --- sans avoir besoin d'étiquettes.}
+
+\faq{Pourquoi $K=100$ puis $K=500$ ?}{%
+Pour calquer les cardinalités des itérations 1 et 2 de HuBERT. En phase 1,
+les features MFCC sont grossières (100 clusters suffisent) ; en phase 2,
+les features de l'encodeur sont plus fines et supportent un vocabulaire
+plus large (500 clusters), proche du sous-phonémique.}
+
+\subsection{Entraînement pratique}
+
+\faq{Combien de données et de calcul faut-il ?}{%
+Le papier pré-entraîne sur $\sim$83\,000 heures (LibriLight + sous-ensemble
+anglais de Granary), sur 8 GPU, batch global 192, séquences jusqu'à 15\,s.
+C'est un entraînement « gros corpus ». Pour expérimenter, on peut commencer
+sur LibriSpeech (960\,h) à échelle réduite.}
+
+\faq{Pourquoi deux \emph{lancements} séparés et pas une seule commande ?}{%
+Par simplicité d'ingénierie : la phase 2 a besoin du checkpoint de la phase
+1 (\code{--pt\_ckpt}) et active des options différentes (\code{--online\_gmm},
+$K$, LR). Conceptuellement c'est \emph{une} trajectoire continue ; en
+pratique c'est deux exécutions enchaînées.}
+
+\faq{Que contient le « checkpoint portable » et pourquoi l'appeler ainsi ?}{%
+Il bundle l'encodeur online, l'encodeur EMA, les paramètres du GMM et le
+numéro de step, dans un simple \file{.pt} indépendant de DeepSpeed. «
+Portable » = on peut le recharger sans l'infrastructure d'entraînement,
+pour reprendre ou pour extraire des features. C'est lui qu'on chargera côté
+Rust pour l'inférence (en ne gardant que l'encodeur).}
+
+\faq{Pourquoi désactiver l'augmentation plus tard en phase 2 ?}{%
+Parce que le GMM calcule sa cible sur le signal \emph{propre} alors que
+l'encodeur voit le signal \emph{augmenté}. Cela impose une contrainte
+d'invariance supplémentaire qui, à ce stade, rend la prédiction masquée
+plus difficile que nécessaire. Couper l'augmentation aligne ce que voient
+les deux côtés.}
+
+\faq{Pourquoi la loss sur positions \emph{visibles} est-elle calculée mais
+pas optimisée ?}{%
+Prédire un cluster là où l'encodeur voit déjà l'entrée est trop facile et
+apporte des gradients largement redondants. On la garde pour le
+\emph{monitoring} (logging) mais on n'optimise que les positions masquées,
+comme data2vec / wav2vec~2.0 / HuBERT.}
+
+\subsection{Après l'entraînement : usage}
+
+\faq{Une fois entraîné, qu'est-ce qu'on garde ?}{%
+\textbf{Uniquement l'encodeur $f_\phi$}. Le prédicteur, la tête de cluster
+et le GMM sont jetés. C'est l'encodeur (51.8M params) qui produit les
+représentations utilisées en aval.}
+
+\faq{Comment utilise-t-on S-JEPA pour une tâche concrète (ASR, émotion) ?}{%
+On \emph{gèle} l'encodeur et on entraîne une petite tête spécifique à la
+tâche sur ses features (protocole SUPERB). L'encodeur n'est pas
+fine-tuné ; seule la tête apprend. C'est rapide et révèle la qualité des
+représentations.}
+
+\faq{Pourquoi l'inférence en Rust et pas tout en Python ?}{%
+Pour la production : Rust offre des latences prévisibles, pas de GIL, une
+empreinte mémoire maîtrisée et un déploiement en binaire autonome.
+L'entraînement reste en Python (écosystème PyTorch/recherche), l'inférence
+critique passe en Rust. On vérifie la parité numérique entre les deux.}
+
+\faq{Comment garantir que le Rust donne les mêmes résultats que le Python ?}{%
+Par des \emph{tests de parité} : on sauvegarde des entrées/sorties de
+référence depuis Python (frontend CNN, chaque couche transformer, sortie
+finale) et on vérifie que l'implémentation Rust reproduit ces tenseurs à
+une tolérance numérique près. Points sensibles : LayerNorm en fp32, ordre
+des opérations d'attention, weight-norm de l'encodage positionnel.}
+
+\faq{Le GMM est-il nécessaire à l'inférence ?}{%
+Non. Le GMM ne sert qu'à fabriquer les \emph{cibles} pendant le
+pré-entraînement. À l'inférence on ne fait tourner que l'encodeur ; il n'y
+a ni GMM, ni prédicteur, ni masquage.}
+
+\faq{Et le masquage, à l'inférence ?}{%
+Désactivé. On donne le signal complet à l'encodeur et on lit ses features
+frame par frame. Le masquage est un artefact d'entraînement.}
+
+\subsection{Questions « pièges »}
+
+\faq{Si on jette le GMM et le prédicteur, à quoi servaient-ils ?}{%
+Ils ne servent qu'à \emph{façonner} l'encodeur pendant l'entraînement. Le
+GMM fournit des cibles douces, le prédicteur force l'encodeur à produire un
+contexte assez riche pour qu'on puisse deviner les frames masquées. Une
+fois l'encodeur bon, les échafaudages tombent.}
+
+\faq{S-JEPA est-il « juste HuBERT avec un GMM » ?}{%
+En esprit oui (« HuBERT à cibles douces dans une architecture JEPA »), mais
+trois différences techniques comptent : (1) cibles \emph{douces} GMM au lieu
+de dures $k$-means, (2) GMM \emph{en ligne} au lieu de re-clustering
+hors-ligne, (3) couche source du GMM choisie \emph{automatiquement} par
+rang effectif. C'est la \emph{recette} combinée qui est la contribution,
+pas un nouveau bloc d'architecture.}
+
+\faq{Pourquoi S-JEPA bat-il des modèles plus gros sur certaines tâches ?}{%
+L'hypothèse du papier : les cibles douces transportent de l'information que
+les cibles dures jettent (la masse inter-clusters aux frontières). Sur
+36.6\,\% des frames, cette information existe. Le papier ne \emph{prouve}
+pas la causalité, mais corrèle cette structure d'incertitude avec
+l'efficacité paramétrique.}
+
+\faq{La « switched EMA » est-elle indispensable ?}{%
+Le papier la présente comme importante mais reconnaît (Limitations) qu'elle
+manque d'une comparaison contrôlée. Le code de référence ne l'implémente
+même pas (EMA fixe). Pour la prod, on l'implémentera proprement \emph{et}
+on gardera l'option EMA fixe, afin de pouvoir comparer.}
+
+\faq{Tout ceci marche-t-il sur d'autres langues / de l'audio non-vocal ?}{%
+Non testé : le papier est entièrement en anglais et le signale comme
+limitation. Langues tonales, faibles ressources et audio non-vocal sont
+des extensions ouvertes.}
+
+% ============================================================
+\section*{Références principales}
+% ============================================================
+\addcontentsline{toc}{section}{Références principales}
+\begin{itemize}[leftmargin=*]
+  \item Papier S-JEPA : \file{papers/sources/arXiv-2606.19398v1/main.tex}.
+  \item Code de référence :
+  \file{papers/sources/s-jepa-main/\{model,train,fit\_gmm\}.py}.
+  \item Antécédents : HuBERT (cibles dures, deux itérations),
+  wav2vec~2.0 (masquage, encodage positionnel convolutionnel),
+  data2vec / BYOL (encodeur EMA), I-JEPA (pattern encodeur--prédicteur).
+\end{itemize}
+
+\end{document}

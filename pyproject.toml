@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sjepa"
+version = "0.1.0"
+description = "S-JEPA speech self-supervised model (reimplementation for stable training and inference)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Arnold Mokira", email = "arnoldmokira3d48@gmail.com" },
+]
+dependencies = [
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "numpy>=1.23",
+    "loguru>=0.7",
+    "tqdm>=4.65",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+# Add the package source to the path. We do NOT add the repository root,
+# because the root logging.py would shadow the standard library logging.
+pythonpath = ["src"]

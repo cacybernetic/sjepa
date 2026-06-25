@@ -1,0 +1,220 @@
+\begin{thebibliography}{42}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Assran et~al.(2023)Assran, Duval, Misra, Bojanowski, Vincent, Rabbat, LeCun, and Ballas]{assran2023ijepa}
+Mahmoud Assran, Quentin Duval, Ishan Misra, Piotr Bojanowski, Pascal Vincent, Michael Rabbat, Yann LeCun, and Nicolas Ballas.
+\newblock Self-supervised learning from images with a joint-embedding predictive architecture.
+\newblock In \emph{CVPR}, 2023.
+
+\bibitem[Baevski et~al.(2020{\natexlab{a}})Baevski, Schneider, and Auli]{baevski2019vqwav2vec}
+Alexei Baevski, Steffen Schneider, and Michael Auli.
+\newblock vq-wav2vec: Self-supervised learning of discrete speech representations.
+\newblock In \emph{ICLR}, 2020{\natexlab{a}}.
+
+\bibitem[Baevski et~al.(2020{\natexlab{b}})Baevski, Zhou, Mohamed, and Auli]{baevski2020wav2vec}
+Alexei Baevski, Yuhao Zhou, Abdelrahman Mohamed, and Michael Auli.
+\newblock wav2vec 2.0: A framework for self-supervised learning of speech representations.
+\newblock In \emph{NeurIPS}, 2020{\natexlab{b}}.
+
+\bibitem[Baevski et~al.(2022)Baevski, Hsu, Xu, Babu, Gu, and Auli]{baevski2022data2vec}
+Alexei Baevski, Wei-Ning Hsu, Qiantong Xu, Arun Babu, Jiatao Gu, and Michael Auli.
+\newblock data2vec: A general framework for self-supervised learning in speech, vision and language.
+\newblock In \emph{ICML}, 2022.
+
+\bibitem[Balestriero and LeCun(2025)]{balestriero2025lejepa}
+Randall Balestriero and Yann LeCun.
+\newblock Lejepa: Provable and scalable self-supervised learning without the heuristics.
+\newblock \emph{arXiv preprint arXiv:2511.08544}, 2025.
+
+\bibitem[Bishop(2006)]{bishop2006pattern}
+Christopher~M Bishop.
+\newblock \emph{Pattern Recognition and Machine Learning}.
+\newblock Springer, 2006.
+
+\bibitem[Caron et~al.(2021)Caron, Touvron, Misra, J{\'e}gou, Mairal, Bojanowski, and Joulin]{caron2021dino}
+Mathilde Caron, Hugo Touvron, Ishan Misra, Herv{\'e} J{\'e}gou, Julien Mairal, Piotr Bojanowski, and Armand Joulin.
+\newblock Emerging properties in self-supervised vision transformers.
+\newblock In \emph{ICCV}, 2021.
+
+\bibitem[Chang et~al.(2022)Chang, Yang, and Lee]{chang2022distilhubert}
+Heng-Jui Chang, Shu-wen Yang, and Hung-yi Lee.
+\newblock Distilhubert: Speech representation learning by layer-wise distillation of hidden-unit bert.
+\newblock In \emph{ICASSP 2022-2022 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)}, pages 7087--7091. IEEE, 2022.
+
+\bibitem[Chen et~al.(2022)Chen, Wang, Chen, Wu, Liu, Chen, Li, Kanda, Yoshioka, Xiao, et~al.]{chen2022wavlm}
+Sanyuan Chen, Chengyi Wang, Zhengyang Chen, Yu~Wu, Shujie Liu, Zhuo Chen, Jinyu Li, Naoyuki Kanda, Takuya Yoshioka, Xiong Xiao, et~al.
+\newblock Wavlm: Large-scale self-supervised pre-training for full stack speech processing.
+\newblock In \emph{IEEE JSTSP}, 2022.
+
+\bibitem[Chiu et~al.(2022)Chiu, Qin, Zhang, Yu, and Wu]{chiu2022bestrq}
+Chung-Cheng Chiu, James Qin, Yu~Zhang, Jiahui Yu, and Yonghui Wu.
+\newblock Self-supervised learning with random-projection quantizer for speech recognition.
+\newblock In \emph{ICML}, 2022.
+
+\bibitem[Chung et~al.(2019)Chung, Hsu, Tang, and Glass]{chung2019apc}
+Yu-An Chung, Wei-Ning Hsu, Hao Tang, and James Glass.
+\newblock An unsupervised autoregressive model for speech representation learning.
+\newblock In \emph{INTERSPEECH}, 2019.
+
+\bibitem[Chung et~al.(2020)Chung, Tang, and Glass]{chung2020vqapc}
+Yu-An Chung, Hao Tang, and James Glass.
+\newblock Vector-quantized autoregressive predictive coding.
+\newblock In \emph{INTERSPEECH}, 2020.
+
+\bibitem[Chung et~al.(2021)Chung, Zhang, Han, Chiu, Qin, Pang, and Wu]{chung2021w2vbert}
+Yu-An Chung, Yu~Zhang, Wei Han, Chung-Cheng Chiu, James Qin, Ruoming Pang, and Yonghui Wu.
+\newblock w2v-bert: Combining contrastive learning and masked language modeling for self-supervised speech pre-training.
+\newblock In \emph{ASRU}, 2021.
+
+\bibitem[Dempster et~al.(1977)Dempster, Laird, and Rubin]{dempster1977em}
+Arthur~P Dempster, Nan~M Laird, and Donald~B Rubin.
+\newblock Maximum likelihood from incomplete data via the em algorithm.
+\newblock \emph{Journal of the Royal Statistical Society: Series B}, 1977.
+
+\bibitem[Fei et~al.(2024)Fei, Fan, and Huang]{fang2024ajepa}
+Zhengcong Fei, Mingyuan Fan, and Junshi Huang.
+\newblock A-jepa: Joint-embedding predictive architecture can listen.
+\newblock 2024.
+\newblock URL \url{https://arxiv.org/abs/2311.15830}.
+
+\bibitem[Garrido et~al.(2023)Garrido, Balestriero, Najman, and Lecun]{garrido2023rankme}
+Quentin Garrido, Randall Balestriero, Laurent Najman, and Yann Lecun.
+\newblock Rankme: Assessing the downstream performance of pretrained self-supervised representations by their rank.
+\newblock In \emph{International conference on machine learning}, pages 10929--10974. PMLR, 2023.
+
+\bibitem[Goldfeder et~al.(2026)Goldfeder, Wyder, LeCun, and Ziv]{goldfeder2026ai}
+Judah Goldfeder, Philippe Wyder, Yann LeCun, and Ravid~Shwartz Ziv.
+\newblock Ai must embrace specialization via superhuman adaptable intelligence.
+\newblock \emph{arXiv preprint arXiv:2602.23643}, 2026.
+
+\bibitem[Grill et~al.(2020)Grill, Strub, Altch{\'e}, Tallec, Richemond, Buchatskaya, Doersch, Avila~Pires, Guo, Gheshlaghi~Azar, et~al.]{grill2020byol}
+Jean-Bastien Grill, Florian Strub, Florent Altch{\'e}, Corentin Tallec, Pierre Richemond, Elena Buchatskaya, Carl Doersch, Bernardo Avila~Pires, Zhaohan Guo, Mohammad Gheshlaghi~Azar, et~al.
+\newblock Bootstrap your own latent: A new approach to self-supervised learning.
+\newblock In \emph{NeurIPS}, 2020.
+
+\bibitem[Hinton et~al.(2015)Hinton, Vinyals, and Dean]{hinton2015distilling}
+Geoffrey Hinton, Oriol Vinyals, and Jeff Dean.
+\newblock Distilling the knowledge in a neural network.
+\newblock \emph{arXiv preprint arXiv:1503.02531}, 2015.
+
+\bibitem[Hsu et~al.(2021)Hsu, Bolte, Tsai, Lakhotia, Salakhutdinov, and Mohamed]{hsu2021hubert}
+Wei-Ning Hsu, Benjamin Bolte, Yao-Hung~Hubert Tsai, Kushal Lakhotia, Ruslan Salakhutdinov, and Abdelrahman Mohamed.
+\newblock Hubert: Self-supervised speech representation learning by masked prediction of hidden units.
+\newblock In \emph{IEEE/ACM TASLP}, 2021.
+
+\bibitem[Ioannides et~al.(2026)Ioannides, Kieback, Goldfeder, Pang, Chadha, Elkins, LeCun, and Shwartz-Ziv]{ioannides2026softanchors}
+Georgios Ioannides, Adrian Kieback, Judah Goldfeder, Linsey Pang, Aman Chadha, Aaron Elkins, Yann LeCun, and Ravid Shwartz-Ziv.
+\newblock Soft clustering anchors for self-supervised speech representation learning in joint embedding prediction architectures.
+\newblock \emph{arXiv preprint arXiv:2602.09040}, 2026.
+
+\bibitem[Kahn et~al.(2020)Kahn, Rivi{\`e}re, Zheng, Kharitonov, Xu, Mazar{\'e}, Karadayi, Lber, Schneider, Dupoux, and Synnaeve]{kahn2020librilight}
+Jacob Kahn, Morgane Rivi{\`e}re, Weiyi Zheng, Eugene Kharitonov, Qiantong Xu, Pierre-Emmanuel Mazar{\'e}, Julien Karadayi, Vitaliy Lber, Steffen Schneider, Emmanuel Dupoux, and Gabriel Synnaeve.
+\newblock Libri-light: A benchmark for asr with limited or no supervision.
+\newblock In \emph{ICASSP}, 2020.
+
+\bibitem[Koluguri et~al.(2025)Koluguri, Sekoyan, Zelenfroynd, Meister, Ding, Kostandian, Huang, Karpov, Balam, Lavrukhin, Peng, Papi, Gaido, Brutti, and Ginsburg]{bai2024granary}
+Nithin~Rao Koluguri, Monica Sekoyan, George Zelenfroynd, Sasha Meister, Shuoyang Ding, Sofia Kostandian, He~Huang, Nikolay Karpov, Jagadeesh Balam, Vitaly Lavrukhin, Yifan Peng, Sara Papi, Marco Gaido, Alessio Brutti, and Boris Ginsburg.
+\newblock Granary: Speech recognition and translation dataset in 25 european languages, 2025.
+\newblock URL \url{https://arxiv.org/abs/2505.13404}.
+
+\bibitem[Ladefoged and Johnson(2014)]{ladefoged2014course}
+Peter Ladefoged and Keith Johnson.
+\newblock \emph{A Course in Phonetics}.
+\newblock Cengage Learning, 7th edition, 2014.
+
+\bibitem[LeCun(2022)]{lecun2022jepa}
+Yann LeCun.
+\newblock A path towards autonomous machine intelligence.
+\newblock \emph{OpenReview}, 2022.
+
+\bibitem[Ling and Liu(2020)]{ling2020decoar2}
+Shaoshi Ling and Yuzong Liu.
+\newblock Decoar 2.0: Deep contextualized acoustic representations with vector quantization.
+\newblock \emph{arXiv preprint arXiv:2012.06659}, 2020.
+
+\bibitem[Liu et~al.(2020{\natexlab{a}})Liu, Chung, and Glass]{liu2020npc}
+Alexander~H. Liu, Yu-An Chung, and James Glass.
+\newblock Non-autoregressive predictive coding for learning speech representations from local dependencies.
+\newblock 2020{\natexlab{a}}.
+\newblock URL \url{https://arxiv.org/abs/2011.00406}.
+
+\bibitem[Liu et~al.(2020{\natexlab{b}})Liu, Yang, Chi, Hsu, and Lee]{liu2020mockingjay}
+Andy~T. Liu, Shang-Wen Yang, Po-Han Chi, Po-Chun Hsu, and Hung-yi Lee.
+\newblock Mockingjay: Unsupervised speech representation learning with deep bidirectional transformer encoders.
+\newblock In \emph{ICASSP}, 2020{\natexlab{b}}.
+
+\bibitem[Liu et~al.(2021)]{liu2021tera}
+Andy~T. Liu et~al.
+\newblock Tera: Self-supervised learning of transformer encoder representation for speech.
+\newblock \emph{IEEE/ACM TASLP}, 2021.
+
+\bibitem[Loshchilov and Hutter(2019)]{loshchilov2019adamw}
+Ilya Loshchilov and Frank Hutter.
+\newblock Decoupled weight decay regularization.
+\newblock \emph{ICLR}, 2019.
+
+\bibitem[MacQueen(1967)]{macqueen1967kmeans}
+James MacQueen.
+\newblock Some methods for classification and analysis of multivariate observations.
+\newblock In \emph{Proceedings of the Fifth Berkeley Symposium on Mathematical Statistics and Probability}, 1967.
+
+\bibitem[Panayotov et~al.(2015)Panayotov, Chen, Povey, and Khudanpur]{panayotov2015librispeech}
+Vassil Panayotov, Guoguo Chen, Daniel Povey, and Sanjeev Khudanpur.
+\newblock Librispeech: An asr corpus based on public domain audio books.
+\newblock In \emph{ICASSP}, 2015.
+
+\bibitem[Pascual et~al.(2019)Pascual, Ravanelli, Serra, Bonafonte, and Bengio]{pascual2019pase}
+Santiago Pascual, Mirco Ravanelli, Joan Serra, Antonio Bonafonte, and Yoshua Bengio.
+\newblock Learning problem-agnostic speech representations from multiple self-supervised tasks.
+\newblock In \emph{INTERSPEECH}, 2019.
+
+\bibitem[Radford et~al.(2022)Radford, Kim, Xu, Brockman, McLeavey, and Sutskever]{radford2022robustspeechrecognitionlargescale}
+Alec Radford, Jong~Wook Kim, Tao Xu, Greg Brockman, Christine McLeavey, and Ilya Sutskever.
+\newblock Robust speech recognition via large-scale weak supervision, 2022.
+\newblock URL \url{https://arxiv.org/abs/2212.04356}.
+
+\bibitem[Schneider et~al.(2019)Schneider, Baevski, Collobert, and Auli]{schneider2019wav2vec}
+Steffen Schneider, Alexei Baevski, Ronan Collobert, and Michael Auli.
+\newblock wav2vec: Unsupervised pre-training for speech recognition.
+\newblock In \emph{Interspeech}, 2019.
+
+\bibitem[Skean et~al.(2025)Skean, Arefin, Zhao, Patel, Naghiyev, LeCun, and Shwartz-Ziv]{skean2025layer}
+Oscar Skean, Md~Rifat Arefin, Dan Zhao, Niket Patel, Jalal Naghiyev, Yann LeCun, and Ravid Shwartz-Ziv.
+\newblock Layer by layer: Uncovering hidden representations in language models.
+\newblock \emph{arXiv preprint arXiv:2502.02013}, 2025.
+
+\bibitem[Stevens(1998)]{stevens1998acoustic}
+Kenneth~N. Stevens.
+\newblock \emph{Acoustic Phonetics}.
+\newblock MIT Press, 1998.
+
+\bibitem[Tishby et~al.(2000)Tishby, Pereira, and Bialek]{tishby2000information}
+Naftali Tishby, Fernando~C Pereira, and William Bialek.
+\newblock The information bottleneck method.
+\newblock \emph{arXiv preprint physics/0004057}, 2000.
+
+\bibitem[van~den Oord et~al.(2018)van~den Oord, Li, and Vinyals]{oord2018cpc}
+Aaron van~den Oord, Yazhe Li, and Oriol Vinyals.
+\newblock Representation learning with contrastive predictive coding.
+\newblock In \emph{arXiv preprint arXiv:1807.03748}, 2018.
+
+\bibitem[Vaswani et~al.(2017)Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, and Polosukhin]{vaswani2017attention}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan~N Gomez, Lukasz Kaiser, and Illia Polosukhin.
+\newblock Attention is all you need.
+\newblock In \emph{NeurIPS}, 2017.
+
+\bibitem[Vitter(1985)]{vitter1985reservoir}
+Jeffrey~S. Vitter.
+\newblock Random sampling with a reservoir.
+\newblock \emph{ACM Transactions on Mathematical Software}, 11\penalty0 (1):\penalty0 37--57, 1985.
+
+\bibitem[wen Yang et~al.(2021)wen Yang, Chi, Chuang, Lai, Lakhotia, Lin, Liu, Shi, Chang, Lin, Huang, Tseng, tik Lee, Liu, Huang, Dong, Li, Watanabe, Mohamed, and yi~Lee]{yang2021superbspeechprocessinguniversal}
+Shu wen Yang, Po-Han Chi, Yung-Sung Chuang, Cheng-I~Jeff Lai, Kushal Lakhotia, Yist~Y. Lin, Andy~T. Liu, Jiatong Shi, Xuankai Chang, Guan-Ting Lin, Tzu-Hsien Huang, Wei-Cheng Tseng, Ko~tik Lee, Da-Rong Liu, Zili Huang, Shuyan Dong, Shang-Wen Li, Shinji Watanabe, Abdelrahman Mohamed, and Hung yi~Lee.
+\newblock Superb: Speech processing universal performance benchmark, 2021.
+\newblock URL \url{https://arxiv.org/abs/2105.01051}.
+
+\end{thebibliography}
