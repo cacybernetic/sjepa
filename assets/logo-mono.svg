@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    S-JEPA monochrome icon (single ink color, transparent background).
+    Good for stamps, favicons, dark/light themes. Change "currentColor" by
+    editing the "ink" value below.
+  -->
+  <defs>
+    <style>:root { } .ink { fill: #14191f; } .stroke { stroke: #14191f; }</style>
+  </defs>
+
+  <!-- soft cluster posteriors, shown by shrinking opacity -->
+  <circle class="ink" cx="196" cy="116" r="15" opacity="1.0"/>
+  <circle class="ink" cx="256" cy="104" r="12" opacity="0.6"/>
+  <circle class="ink" cx="312" cy="120" r="9"  opacity="0.32"/>
+
+  <line class="stroke" x1="84" y1="300" x2="428" y2="300" stroke-width="4"
+        opacity="0.3"/>
+
+  <g class="ink">
+    <rect x="92"  y="262" width="16" height="76"  rx="8"/>
+    <rect x="120" y="232" width="16" height="136" rx="8"/>
+    <rect x="148" y="284" width="16" height="32"  rx="8"/>
+    <rect x="176" y="208" width="16" height="184" rx="8"/>
+    <rect x="204" y="250" width="16" height="100" rx="8"/>
+    <g opacity="0.25">
+      <rect x="232" y="276" width="16" height="48"  rx="8"/>
+      <rect x="260" y="244" width="16" height="112" rx="8"/>
+      <rect x="288" y="268" width="16" height="64"  rx="8"/>
+    </g>
+    <rect x="316" y="220" width="16" height="160" rx="8"/>
+    <rect x="344" y="262" width="16" height="76"  rx="8"/>
+    <rect x="372" y="240" width="16" height="120" rx="8"/>
+    <rect x="400" y="276" width="16" height="48"  rx="8"/>
+  </g>
+
+  <rect class="stroke" x="222" y="196" width="92" height="208" rx="16"
+        fill="none" stroke-width="5" stroke-dasharray="14 10" opacity="0.85"/>
+
+  <text class="ink" x="256" y="446" text-anchor="middle"
+        font-family="DejaVu Sans, Arial, sans-serif" font-size="64"
+        font-weight="700" letter-spacing="2">S-JEPA</text>
+</svg>
