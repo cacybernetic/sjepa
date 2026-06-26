@@ -1,0 +1,26 @@
+# Build a ready-to-train HDF5 dataset on CPU.
+# Start with: buildsjepa -c cpu/configs/hdf5.yaml
+run_name: sjepa_base
+runs_root: runs
+device: cpu
+seed: 0
+
+dataset:
+  use_hdf5: false        # source is raw audio; the output is the HDF5 file
+  validate: true
+  train_path: data/train.zip
+  test_path: data/test.zip
+  train_h5: data/train.h5
+  test_h5: data/test.h5
+  max_train_samples: null
+  max_test_samples: null
+  val_prob: 0.5
+  sample_rate: 16000
+  max_seconds: 15.0
+  num_workers: 2
+  augment:
+    enabled: false       # true also stores an augmented copy of each clip
+    p_noise: 0.25
+    p_mix: 0.25
+    snr_noise: [-5, 20]
+    ratio_mix: [-5, 5]

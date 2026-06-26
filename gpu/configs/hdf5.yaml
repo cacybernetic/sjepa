@@ -1,0 +1,26 @@
+# Build a ready-to-train HDF5 dataset on GPU machines (NVIDIA / AMD).
+# Start with: buildsjepa -c gpu/configs/hdf5.yaml
+run_name: sjepa_base
+runs_root: runs
+device: cuda
+seed: 0
+
+dataset:
+  use_hdf5: false
+  validate: true
+  train_path: data/train.zip
+  test_path: data/test.zip
+  train_h5: data/train.h5
+  test_h5: data/test.h5
+  max_train_samples: null
+  max_test_samples: null
+  val_prob: 0.5
+  sample_rate: 16000
+  max_seconds: 15.0
+  num_workers: 8
+  augment:
+    enabled: false
+    p_noise: 0.25
+    p_mix: 0.25
+    snr_noise: [-5, 20]
+    ratio_mix: [-5, 5]

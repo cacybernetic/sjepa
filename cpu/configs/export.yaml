@@ -1,0 +1,16 @@
+# Export the trained encoder to ONNX and run standalone inference (CPU).
+# Export:    exportsjepa -c cpu/configs/export.yaml
+# Inference: infersjepa -c cpu/configs/export.yaml --audio path/to/clip.wav
+run_name: sjepa_base
+runs_root: runs
+device: cpu
+seed: 0
+init_weights: runs/sjepa_base/train/weights/best.pt   # weights to export
+onnx_path: runs/sjepa_base/export/encoder.onnx
+audio: data/sample.wav                                # used by infersjepa
+
+model:
+  size: base
+
+gmm:
+  num_clusters: 100      # must match the training run

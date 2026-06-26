@@ -1,0 +1,92 @@
+# S-JEPA single-run two-phase training on CPU (small, end-to-end demo).
+# Phase 1 (MFCC GMM) runs until it plateaus, then the run switches to Phase 2
+# (online encoder GMM) inside the same trajectory; partway through Phase 2 the
+# loss becomes masked-only with augmentation off. masked_only_epoch is kept
+# AFTER phase2_start_epoch so the schedule matches the paper, and Phase 2 gets
+# the larger share of epochs so it can fall back below the Phase 1 plateau.
+# Cadences are deliberately tiny so the Phase 2 machinery (EMA switch, adaptive
+# layer, online GMM) actually fires at CPU scale.
+# Start with: trainsjepa -c cpu/configs/train_twophase.yaml
+run_name: sjepa_twophase
+runs_root: runs
+device: cpu
+seed: 0
+init_weights: null
+onnx_path: runs/sjepa_twophase/export/encoder.onnx
+
+dataset:
+  use_hdf5: false
+  validate: true
+  train_path: data/train.zip
+  test_path: data/test.zip
+  train_h5: data/train.h5
+  test_h5: data/test.h5
+  max_train_samples: 500    # enough frames to seed the K=64 online GMM
+  max_test_samples: 128
+  val_prob: 0.5
+  sample_rate: 16000
+  max_seconds: 15.0
+  num_workers: 2
+  augment:
+    enabled: true
+    p_noise: 0.25
+    p_mix: 0.25
+    snr_noise: [-5, 20]
+    ratio_mix: [-5, 5]
+
+model:
+  size: tiny              # 2 transformer layers (valid layer indices: 0, 1)
+
+masking:
+  mask_ratio: 0.65
+  mask_length: 10
+
+train:
+  epochs: 30
+  batch_size: 4
+  grad_accum: 2           # exercises the per-micro-batch GMM accumulation
+  grad_clip_norm: 1.0
+  log_every: 4
+  phase: 1
+  use_visible_loss: true
+  phase2_start_epoch: 10  # switch to the online encoder GMM here (after P1 plateaus)
+  masked_only_epoch: 20   # AFTER the transition: partway through Phase 2, drop
+                          # the visible loss + turn augmentation off
+  # Phase split: Phase 1 = epochs 0..9, Phase 2 = epochs 10..29 (20 epochs so it
+  # has room to fall back below the Phase 1 plateau before the run ends).
+
+optimizer:
+  name: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  betas: [0.9, 0.99]
+
+scheduler:
+  kind: cosine
+  warmup_steps: 50
+  min_ratio: 0.1          # LR floor so Phase 2 keeps a usable rate
+
+gmm:
+  num_clusters: 32        # K in Phase 1 (small for the demo)
+  num_clusters_phase2: 64 # K after the transition
+  kmeans_iters: 5
+  em_iters: 10
+  fit_frames: 8000
+  path: null
+  online: false
+  param_decay: 0.999
+  ema_layer: 1            # tiny model only has layers 0 and 1
+  auto_layer: true
+  layer_check_every: 20   # check the layer often at this small scale
+  erank_decay: 0.9
+  ema_decay_fast: 0.999
+  ema_decay_slow: 0.9999
+  ema_switch_every: 100   # actually flip the EMA decay within the run
+
+checkpoint:
+  dir: null
+  max_checkpoint: 3
+  resume: false
+
+best:
+  metric: kl

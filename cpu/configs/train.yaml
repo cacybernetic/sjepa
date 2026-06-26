@@ -1,0 +1,78 @@
+# S-JEPA training configuration for CPU.
+# Start with: trainsjepa -c cpu/configs/train.yaml
+run_name: sjepa_base
+runs_root: runs
+device: cpu            # cpu | cuda | rocm (rocm and cuda share the same path)
+seed: 0
+init_weights: null     # optional path to a .pt to warm start from
+onnx_path: runs/sjepa_base/export/encoder.onnx
+
+dataset:
+  use_hdf5: false       # read audio on the fly; set true to read from HDF5
+  validate: true        # clean and cache the dataset before training
+  train_path: data/train.zip
+  test_path: data/test.zip
+  train_h5: data/train.h5
+  test_h5: data/test.h5
+  max_train_samples: null   # null = use all, or an integer cap
+  max_test_samples: null
+  val_prob: 0.5             # fraction of the test set used for validation
+  sample_rate: 16000
+  max_seconds: 15.0
+  num_workers: 2
+  augment:
+    enabled: true
+    p_noise: 0.25
+    p_mix: 0.25
+    snr_noise: [-5, 20]
+    ratio_mix: [-5, 5]
+
+model:
+  size: base            # tiny | small | base | large
+
+masking:
+  mask_ratio: 0.65
+  mask_length: 10
+
+train:
+  epochs: 10
+  batch_size: 8
+  grad_accum: 4         # effective batch = batch_size x grad_accum
+  grad_clip_norm: 1.0
+  log_every: 16
+  phase: 1              # 1 = frozen MFCC GMM, 2 = online encoder GMM
+  use_visible_loss: true
+
+optimizer:
+  name: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  betas: [0.9, 0.99]
+
+scheduler:
+  kind: cosine          # cosine | constant
+  warmup_steps: 500
+  min_ratio: 0.1          # LR floor so Phase 2 keeps a usable rate
+
+gmm:
+  num_clusters: 100     # K = 100 in phase 1, K = 500 in phase 2
+  kmeans_iters: 5
+  em_iters: 20
+  fit_frames: 50000
+  path: null            # optional pre-fit GMM .pt
+  online: false         # phase 2 online GMM (set true with phase: 2)
+  param_decay: 0.999
+  ema_layer: 2
+  auto_layer: false
+  layer_check_every: 10000
+  ema_decay_fast: 0.999
+  ema_decay_slow: 0.9999
+  ema_switch_every: 20000
+
+checkpoint:
+  dir: null             # null = use <run>/checkpoints
+  max_checkpoint: 5
+  resume: false         # true reuses the latest run folder with a checkpoint
+
+best:
+  metric: kl            # which validation metric picks best.pt (kl, top1, ...)

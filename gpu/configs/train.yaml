@@ -1,0 +1,84 @@
+# S-JEPA training configuration for GPU (NVIDIA CUDA and AMD ROCm).
+# Start with: trainsjepa -c gpu/configs/train.yaml
+# Both NVIDIA and AMD use device: cuda (a ROCm torch build maps it for you).
+run_name: sjepa_base
+runs_root: runs
+device: cuda
+seed: 0
+init_weights: null
+onnx_path: runs/sjepa_base/export/encoder.onnx
+
+dataset:
+  use_hdf5: false
+  validate: true
+  train_path: data/train.zip
+  test_path: data/test.zip
+  train_h5: data/train.h5
+  test_h5: data/test.h5
+  max_train_samples: null
+  max_test_samples: null
+  val_prob: 0.5
+  sample_rate: 16000
+  max_seconds: 15.0
+  num_workers: 8
+  augment:
+    enabled: true
+    p_noise: 0.25
+    p_mix: 0.25
+    snr_noise: [-5, 20]
+    ratio_mix: [-5, 5]
+
+model:
+  size: base
+
+masking:
+  mask_ratio: 0.65
+  mask_length: 10
+
+train:
+  epochs: 100
+  batch_size: 24
+  grad_accum: 8         # effective batch = 192 like the paper
+  grad_clip_norm: 1.0
+  log_every: 100
+  phase: 1
+  use_visible_loss: true
+  phase2_start_epoch: 50   # switch to the online encoder GMM (K=500) mid-run
+  masked_only_epoch: 75    # then drop the visible loss + turn augmentation off
+
+optimizer:
+  name: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  betas: [0.9, 0.99]
+
+scheduler:
+  kind: cosine
+  warmup_steps: 5000
+  min_ratio: 0.1          # LR floor so Phase 2 keeps a usable rate
+  rewarm_on_phase2: true  # warm-restart the LR at phase2_start_epoch
+
+gmm:
+  num_clusters: 100        # K in phase 1
+  num_clusters_phase2: 500 # K after the phase 2 transition
+  kmeans_iters: 5
+  em_iters: 20
+  fit_frames: 200000
+  path: null
+  online: false
+  param_decay: 0.999
+  ema_layer: 2
+  auto_layer: true
+  layer_check_every: 10000
+  erank_decay: 0.9
+  ema_decay_fast: 0.999
+  ema_decay_slow: 0.9999
+  ema_switch_every: 20000
+
+checkpoint:
+  dir: null
+  max_checkpoint: 5
+  resume: false
+
+best:
+  metric: kl

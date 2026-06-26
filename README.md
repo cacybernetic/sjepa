@@ -381,8 +381,49 @@ recognition, emotion, ...).
 
 ### 6. Two-phase training
 
-Run Phase 1 first (frozen MFCC GMM). Then run Phase 2 (online encoder GMM) by
-setting in the config:
+The paper runs both phases as **one continuous trajectory**. The trainer does
+this in a single run: start in Phase 1 (frozen MFCC GMM) and let it switch to
+Phase 2 (online encoder GMM, `K = 500`) at a chosen epoch.
+
+```yaml
+train:
+  phase: 1
+  phase2_start_epoch: 50   # switch to the online encoder GMM mid-run
+  masked_only_epoch: 75    # then drop the visible loss + turn augmentation off
+gmm:
+  num_clusters: 100        # K in Phase 1
+  num_clusters_phase2: 500 # K after the transition
+  auto_layer: true         # pick the GMM input layer by effective rank
+```
+
+At `phase2_start_epoch` the cluster head is rebuilt for `K = 500` (its optimizer
+state swapped in place while the encoder/predictor moments are kept), an EMA
+target encoder is created from the current encoder, and an online GMM is seeded
+over the EMA features at the active layer. The active layer is then tracked by
+effective rank. At `masked_only_epoch` the loss becomes masked-only and the
+denoising augmentation is turned off, matching the paper's Phase 2 transition.
+
+The learning rate is **warm-restarted at the transition** (`scheduler.rewarm_on_phase2`,
+on by default): a single whole-run cosine would otherwise leave Phase 2 — the
+phase that does the heavy lifting — training on its decayed tail near zero. With
+the restart, the LR warms back up at `phase2_start_epoch` and decays again over
+the Phase 2 epochs down to `scheduler.min_ratio` of the peak (keep `min_ratio`
+above 0, e.g. `0.1`, so it never reaches zero).
+
+> **Order the two switches correctly.** The paper turns the loss masked-only
+> *partway through Phase 2*, so set `masked_only_epoch` **after**
+> `phase2_start_epoch` (e.g. transition at 50, masked-only at 75). If
+> `masked_only_epoch` lands before the transition, the visible loss is dropped
+> while still in Phase 1, which is not the intended schedule. Use `-1` to
+> disable either switch.
+
+> **`ema_layer` must be a valid layer index.** It is the encoder layer the
+> online GMM reads. A `tiny` model has only 2 layers (indices `0, 1`), so use
+> `ema_layer: 1`, not `2`. With `auto_layer: true` the active layer is then
+> re-selected automatically by effective rank.
+
+Prefer two separate runs instead? Leave `phase2_start_epoch: -1` and start a
+fresh run directly in Phase 2:
 
 ```yaml
 train:
@@ -393,9 +434,45 @@ gmm:
 init_weights: runs/sjepa_base/train/weights/best.pt
 ```
 
-In Phase 2 an EMA target encoder feeds an online GMM over encoder features, and
-the active layer can be picked automatically by effective rank
-(`gmm.auto_layer: true`).
+A ready single-run example lives in `cpu/configs/train_twophase.yaml`.
+
+#### Reading the training curves
+
+The two phases optimize **different targets** (MFCC GMM with `K = 100` in
+Phase 1, encoder GMM with `K = 500` in Phase 2), so the KL is **not directly
+comparable across the transition** — judge each phase by its own trend. A
+healthy run looks like this:
+
+| Stage | `val_kl` | `val_top1` | `val_entropy_bits` |
+|-------|----------|------------|--------------------|
+| Phase 1 | falls, then **plateaus** | low, flat | mid |
+| Transition epoch | **spikes up** (new head + new `K`) | jumps | `≈ log2(K)` (uniform) |
+| Phase 2 | **falls back below the Phase 1 plateau** | climbs | **decreases** |
+
+What to watch for:
+
+- **Phase 1 plateau is expected** — it is exactly the ceiling Phase 2 exists to
+  break. Schedule `phase2_start_epoch` once `val_kl` flattens.
+- **The spike at the transition epoch is normal**: the `K = 500` cluster head is
+  freshly initialized and the targets change, so the predictor starts near a
+  uniform distribution (`entropy_bits ≈ log2(K)`). It should recover within a
+  few epochs.
+- **Healthy Phase 2** = `val_kl` trending down past the Phase 1 best, `val_top1`
+  rising, and `val_entropy_bits` decreasing while staying **well above 0**.
+  Entropy collapsing toward 0 (one cluster) or `val_kl` frozen would signal a
+  representational collapse — the online GMM re-seeds dead components to avoid
+  this.
+- **Give Phase 2 a generous epoch budget.** Phase 2 keeps improving even after
+  the learning rate has reached its floor (`min_ratio`): the EMA encoder and the
+  online GMM co-evolve with the encoder, so the targets keep sharpening and
+  `val_kl` keeps falling on a low, steady rate. In practice it is still
+  descending long after the transition — if `val_kl` is still going down at the
+  last epoch, the run stopped early. Schedule the transition once Phase 1
+  flattens and leave Phase 2 the larger share of epochs.
+
+The metrics are logged each epoch and written to `history.csv` with matching
+plots under `<run>/plotes/` (`history_kl.jpg`, `history_top1.jpg`,
+`history_entropy_bits.jpg`, ...).
 
 ---
 
@@ -404,29 +481,44 @@ the active layer can be picked automatically by effective rank
 | File                       | Used by      | Key fields                                            |
 |----------------------------|--------------|-------------------------------------------------------|
 | `cpu/configs/train.yaml`   | `trainsjepa` | `dataset`, `model.size`, `train`, `optimizer`, `gmm`  |
+| `cpu/configs/train_twophase.yaml` | `trainsjepa` | single-run Phase 1 -> Phase 2 demo (`phase2_start_epoch`) |
 | `cpu/configs/hdf5.yaml`    | `buildh5ds`  | `dataset.train_path`, `dataset.train_h5`, `augment`   |
 | `cpu/configs/eval.yaml`    | `evalsjepa`  | `init_weights`, `dataset.test_path`, `gmm.num_clusters` |
 | `cpu/configs/export.yaml`  | `exportw` / `infersjepa` | `init_weights`, `onnx_path`, `audio`      |
 
 The same files exist under `gpu/configs/` with `device: cuda` (used for both
-NVIDIA CUDA and AMD ROCm). A few important keys:
+NVIDIA CUDA and AMD ROCm), sized for a full-scale run (`model.size: base`, the
+whole corpus, the paper's epoch budget). The `cpu/configs/` are for quick local
+experiments on a CPU-only machine (`tiny`/`small`, capped `max_train_samples`).
+The two sets are kept in sync: any change to a `cpu/` config is mirrored to its
+`gpu/` counterpart. A few important keys:
 
 ```yaml
 train:
   epochs: 10
   batch_size: 8
-  grad_accum: 4          # effective batch = batch_size x grad_accum
-  phase: 1               # 1 = MFCC GMM, 2 = online encoder GMM
-  use_visible_loss: true # add the visible-frame KL (Phase 1 / early Phase 2)
+  grad_accum: 4            # effective batch = batch_size x grad_accum
+  phase: 1                 # 1 = MFCC GMM, 2 = online encoder GMM
+  use_visible_loss: true   # add the visible-frame KL (Phase 1 / early Phase 2)
+  phase2_start_epoch: -1   # epoch to switch to Phase 2 in one run (-1 = off)
+  masked_only_epoch: -1    # epoch to drop visible loss + augmentation (-1 = off)
 
 gmm:
-  num_clusters: 100      # K = 100 (Phase 1), 500 (Phase 2)
-  online: false          # true for Phase 2
-  ema_layer: 2           # encoder layer used by the online GMM
-  auto_layer: false      # pick the layer by effective rank
+  num_clusters: 100        # K in Phase 1
+  num_clusters_phase2: 500 # K after the in-run Phase 2 transition
+  online: false            # true to start a run directly in Phase 2
+  ema_layer: 2             # initial encoder layer used by the online GMM
+  auto_layer: true         # pick the layer by effective rank
+  erank_decay: 0.9         # smoothing of the per-check effective-rank score
+
+scheduler:
+  kind: cosine             # cosine | constant
+  warmup_steps: 5000
+  min_ratio: 0.1           # LR floor (fraction of peak); keep > 0 for Phase 2
+  rewarm_on_phase2: true   # warm-restart the LR at phase2_start_epoch
 
 best:
-  metric: kl             # which metric chooses best.pt (kl, top1, entropy_bits)
+  metric: kl               # which metric chooses best.pt (kl, top1, entropy_bits)
 ```
 
 ---

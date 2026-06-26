@@ -133,3 +133,25 @@ def log_hparams(title: str, items: dict, color: str = "cyan") -> None:
     log.info(banner(title, color=color))
     for key, value in items.items():
         log.info("  {:<28} = {}", key, value)
+
+
+def _log_nested(log, mapping: dict, indent: int) -> None:
+    """Log a nested mapping with simple indentation (one level per depth)."""
+    pad = "  " * indent
+    for key, value in mapping.items():
+        if isinstance(value, dict):
+            log.info("{}{}:", pad, key)
+            _log_nested(log, value, indent + 1)
+        else:
+            log.info("{}{}: {}", pad, key, value)
+
+
+def log_config(title: str, mapping: dict, color: str = "cyan") -> None:
+    """Log a full nested configuration for traceability.
+
+    The output follows the spec preview: a banner title, then every setting on
+    its own line, with deeper sections indented under their parent.
+    """
+    log = get_logger()
+    log.info(banner(title, color=color))
+    _log_nested(log, mapping, 1)

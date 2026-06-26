@@ -13,12 +13,33 @@ authors = [
     { name = "Arnold Mokira", email = "arnoldmokira3d48@gmail.com" },
 ]
 dependencies = [
-    "torch>=2.1",
-    "torchaudio>=2.1",
-    "numpy>=1.23",
-    "loguru>=0.7",
-    "tqdm>=4.65",
+    "pyyaml==6.0.3",
+    "pillow==12.2.0",
+    "tomli==2.4.1",
+    "soundfile==0.14.0",
+    "numpy==2.2.6",
+    "matplotlib==3.10.9",
+    "scipy==1.15.3",
+    "h5py==3.16.0",
+    "sympy==1.14.0",
+    "torch==2.8",
+    "torchinfo==1.8.0",
+    "tqdm==4.68.3",
+    "loguru==0.7.3",
 ]
+
+[project.optional-dependencies]
+onnx = [
+    "onnx>=1.15",
+    "onnxruntime>=1.16",
+]
+
+[project.scripts]
+buildh5ds = "sjepa.entrypoints.buildds:main"
+trainsjepa = "sjepa.entrypoints.train:main"
+evalsjepa = "sjepa.entrypoints.evaluate:main"
+exportw = "sjepa.entrypoints.exportmodel:main"
+infersjepa = "sjepa.entrypoints.inference:main"
 
 [dependency-groups]
 dev = [
