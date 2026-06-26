@@ -8,6 +8,8 @@ These cover the pieces the paper relies on to keep Phase 2 from stalling:
   * the phase scheduler performs the transition and the masked-only switch.
 """
 
+import os
+
 import torch
 import torch.nn as nn
 
@@ -283,6 +285,38 @@ def test_lr_no_restart_without_phase2_step():
     assert lrs[5] > lrs[0]            # warmed up
     assert lrs[-1] < lrs[5]           # then decayed
     assert min(lrs) >= 0.1 - 1e-6     # to the floor, not below
+
+
+def test_history_plots_overlay_train_and_val(tmp_path):
+    """Every metric now has both a train and a val series in the plots."""
+    from sjepa.plotting import HistoryPlotter
+    history = [
+        {"epoch": 0, "train_loss": 6.0, "val_loss": 3.1, "train_kl": 3.0,
+         "val_kl": 3.1, "train_top1": 0.10, "val_top1": 0.10,
+         "train_entropy_bits": 4.0, "val_entropy_bits": 4.0},
+        {"epoch": 1, "train_loss": 5.0, "val_loss": 2.8, "train_kl": 2.5,
+         "val_kl": 2.8, "train_top1": 0.20, "val_top1": 0.18,
+         "train_entropy_bits": 3.5, "val_entropy_bits": 3.6},
+    ]
+    plotter = HistoryPlotter(str(tmp_path))
+    names = {os.path.basename(p) for p in plotter.plot(history)}
+    assert {"history_kl.jpg", "history_top1.jpg",
+            "history_entropy_bits.jpg", "history_loss.jpg"} <= names
+    # Each metric carries a train AND a val curve.
+    for metric in ("kl", "top1", "entropy_bits", "loss"):
+        assert len(plotter._series(history, "train", metric)[1]) == 2
+        assert len(plotter._series(history, "val", metric)[1]) == 2
+
+
+def test_history_series_skips_non_numeric_cells():
+    """Resuming an older CSV (empty cells for new metrics) does not break."""
+    from sjepa.plotting import HistoryPlotter
+    history = [
+        {"epoch": 0, "train_top1": ""},      # old row, metric not recorded yet
+        {"epoch": 1, "train_top1": 0.3},     # new row
+    ]
+    epochs, values = HistoryPlotter._series(history, "train", "top1")
+    assert epochs == [1] and values == [0.3]
 
 
 def test_phase2_scaffold_builds_without_data():

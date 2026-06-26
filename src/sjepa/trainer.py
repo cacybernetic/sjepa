@@ -116,6 +116,7 @@ class Trainer:
         self.phase_scheduler = phase_scheduler
         self.current_phase = 2 if phase2 is not None else 1
         self.metrics = MetricGroup()
+        self.train_metrics = MetricGroup()
         self.best = BestTracker(config.best.metric,
                                 MetricGroup.mode_of(config.best.metric))
         self.start_epoch = 0
@@ -184,11 +185,18 @@ class Trainer:
             comp["loss_masked"], comp["loss_visible"], grad_norm)
 
     def _train_epoch(self, epoch):
-        """Train for one epoch and return the average train metrics."""
+        """Train for one epoch and return the average train metrics.
+
+        The same metrics computed at validation (kl, top1, entropy_bits) are also
+        computed here on the training batches, so the history holds a `train_X`
+        and a `val_X` series for every metric and the plots overlay the two
+        curves to expose overfitting.
+        """
         self.model.train()
         loader = self.loaders["train"]
         bar = StepProgress(len(loader), "train", epoch, self.cfg.train.epochs)
-        meters = {"loss": AverageMeter(), "loss_masked": AverageMeter()}
+        meters = {"loss": AverageMeter()}
+        self.train_metrics.reset()
         augmentor = self._augmentor()
         opt_steps = 0
         for index, batch in enumerate(loader):
@@ -198,9 +206,7 @@ class Trainer:
                                           loader, meters, bar, opt_steps)
         opt_steps = self._flush(epoch, len(loader), opt_steps)
         bar.close()
-        return {"loss": meters["loss"].average(),
-                "kl": meters["loss_masked"].average(),
-                "loss_masked": meters["loss_masked"].average()}
+        return {"loss": meters["loss"].average(), **self.train_metrics.compute()}
 
     def _train_batch(self, epoch, batch, augmentor, index, loader, meters, bar,
                      opt_steps):
@@ -208,9 +214,10 @@ class Trainer:
         result = self.step.run(batch, self.targets, augmentor, accumulate=True)
         self._backward(result["loss"])
         meters["loss"].update(float(result["loss"].detach()))
-        meters["loss_masked"].update(result["components"]["loss_masked"])
+        self.train_metrics.update(result["logits_masked"], result["targets"],
+                                  result["selection"])
         bar.update({"loss": meters["loss"].average(),
-                    "kl": meters["loss_masked"].average()})
+                    "kl": self.train_metrics.compute()["kl"]})
         if (index + 1) % self.cfg.train.grad_accum == 0:
             grad_norm = self._optimizer_step()
             opt_steps += 1
@@ -234,20 +241,27 @@ class Trainer:
 
     @torch.no_grad()
     def _validate(self, loader, stage, epoch):
-        """Run a validation pass and return the metric values."""
+        """Run a validation pass and return the metric values.
+
+        The total objective loss is averaged here too (same definition as in
+        training) so the `loss` plot overlays comparable train and val curves,
+        alongside kl, top1, and entropy_bits.
+        """
         self.model.eval()
         self.metrics.reset()
+        loss_meter = AverageMeter()
         bar = StepProgress(len(loader), stage, epoch, self.cfg.train.epochs)
         for batch in loader:
             if batch is None:
                 continue
             result = self.step.run(batch, self.targets, augmentor=None)
+            loss_meter.update(float(result["loss"].detach()))
             self.metrics.update(result["logits_masked"], result["targets"],
                                 result["selection"])
             bar.update(self.metrics.compute())
         bar.close()
         values = self.metrics.compute()
-        values["loss"] = values.get("kl", 0.0)
+        values["loss"] = loss_meter.average()
         return values
 
     # ----- checkpoint and resume -----

@@ -47,13 +47,19 @@ class HistoryPlotter:
 
     @staticmethod
     def _series(history, prefix, metric):
-        """Return (epochs, values) for one train or val metric series."""
+        """Return (epochs, values) for one train or val metric series.
+
+        Only numeric cells are kept, so a CSV that mixes old rows (missing this
+        metric, hence empty cells) with new rows still plots cleanly.
+        """
         epochs, values = [], []
         for row in history:
             key = f"{prefix}_{metric}"
-            if key in row and row[key] is not None:
-                epochs.append(row["epoch"])
-                values.append(row[key])
+            value = row.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            epochs.append(row["epoch"])
+            values.append(value)
         return epochs, values
 
     def _plot_one(self, history, metric):
