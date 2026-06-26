@@ -161,7 +161,7 @@ For a friendly, step-by-step explanation of the ideas, read
 │           ├── buildds.py     # buildh5ds: build an HDF5 dataset
 │           ├── evaluate.py    # evalsjepa: full test-set evaluation
 │           ├── exportmodel.py # exportw: ONNX export
-│           └── inference.py   # infersjepa: standalone ONNX inference
+│           └── inference.py   # runinfer: standalone ONNX inference
 └── tests/                     # unit and integration tests
 ```
 
@@ -173,7 +173,7 @@ For a friendly, step-by-step explanation of the ideas, read
 
 You can install the package directly from GitHub using either `pip` or `uv`.
 This gives you immediate access to all CLI tools (`trainsjepa`, `buildh5ds`,
-`evalsjepa`, `exportw`, `infersjepa`) without downloading the full repository.
+`evalsjepa`, `exportw`, `runinfer`) without downloading the full repository.
 
 **With pip** (works in any Python environment, no extra tools needed):
 
@@ -267,7 +267,7 @@ script. Skip this section if you only train and evaluate.
 uv pip install -e ".[onnx]"
 ```
 
-This adds `onnx` and `onnxruntime` so `exportw` and `infersjepa` can run.
+This adds `onnx` and `onnxruntime` so `exportw` and `runinfer` can run.
 
 ---
 
@@ -306,7 +306,7 @@ and AMD ROCm).
 | `buildh5ds`   | Build a ready-to-train HDF5 dataset        | `buildh5ds -c cpu/configs/hdf5.yaml`     |
 | `evalsjepa`   | Evaluate on the full test set              | `evalsjepa -c cpu/configs/eval.yaml`     |
 | `exportw`     | Export the encoder to ONNX                 | `exportw -c cpu/configs/export.yaml`     |
-| `infersjepa`  | Standalone ONNX inference on one clip      | `infersjepa -c cpu/configs/export.yaml --audio clip.wav` |
+| `runinfer`  | Standalone ONNX inference on one clip      | `runinfer -c cpu/configs/export.yaml --audio clip.wav` |
 
 ### 1. Build an HDF5 dataset
 
@@ -368,11 +368,11 @@ config.
 
 ### 5. Run inference on an audio clip
 
-`infersjepa` is fully self-contained: it imports only `numpy`, `soundfile`,
+`runinfer` is fully self-contained: it imports only `numpy`, `soundfile`,
 `onnxruntime`, and `pyyaml`, so you can copy it into another project.
 
 ```bash
-infersjepa -c cpu/configs/export.yaml --audio data/sample.wav
+runinfer -c cpu/configs/export.yaml --audio data/sample.wav
 ```
 
 It loads the ONNX encoder, reads the clip as mono 16 kHz audio, and prints the
@@ -484,7 +484,7 @@ plots under `<run>/plotes/` (`history_kl.jpg`, `history_top1.jpg`,
 | `cpu/configs/train_twophase.yaml` | `trainsjepa` | single-run Phase 1 -> Phase 2 demo (`phase2_start_epoch`) |
 | `cpu/configs/hdf5.yaml`    | `buildh5ds`  | `dataset.train_path`, `dataset.train_h5`, `augment`   |
 | `cpu/configs/eval.yaml`    | `evalsjepa`  | `init_weights`, `dataset.test_path`, `gmm.num_clusters` |
-| `cpu/configs/export.yaml`  | `exportw` / `infersjepa` | `init_weights`, `onnx_path`, `audio`      |
+| `cpu/configs/export.yaml`  | `exportw` / `runinfer` | `init_weights`, `onnx_path`, `audio`      |
 
 The same files exist under `gpu/configs/` with `device: cuda` (used for both
 NVIDIA CUDA and AMD ROCm), sized for a full-scale run (`model.size: base`, the

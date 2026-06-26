@@ -7,11 +7,14 @@ name = "sjepa"
 version = "0.1.0"
 description = "S-JEPA speech self-supervised model (reimplementation for stable training and inference)."
 readme = "README.md"
-requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
     { name = "Arnold Mokira", email = "arnoldmokira3d48@gmail.com" },
 ]
+maintainers = [
+    { name = "CONSOLE ART CYBERNETIC", email = "ca.cybernetic@gmail.com" },
+]
+requires-python = ">=3.10"
 dependencies = [
     "pyyaml==6.0.3",
     "pillow==12.2.0",
@@ -39,13 +42,26 @@ buildh5ds = "sjepa.entrypoints.buildds:main"
 trainsjepa = "sjepa.entrypoints.train:main"
 evalsjepa = "sjepa.entrypoints.evaluate:main"
 exportw = "sjepa.entrypoints.exportmodel:main"
-infersjepa = "sjepa.entrypoints.inference:main"
+runs = "sjepa.entrypoints.inference:main"
 
 [dependency-groups]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
 ]
+
+[tool.isort]
+line_length = 120
+multi_line_output = 0
+
+[tool.yapf]
+based_on_style = "pep8"
+spaces_before_comment = 2
+column_limit = 120
+
+[project.urls]
+"Homepage" = "https://arxiv.org/html/2606.19398v1"
+#"Bug Tracker" = "https://github.com/your-username/my-python-package/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
