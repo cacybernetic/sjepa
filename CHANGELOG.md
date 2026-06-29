@@ -68,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resume from a Phase 2 checkpoint no longer behaves like a return to Phase 1: it
   rebuilds the scaffolding only, restores the masked-only state, and continues
   from the saved epoch.
+- Install no longer pulls a CUDA `torchaudio` on a CPU-only machine. The
+  `Makefile` now installs `torchaudio` (which the code uses) from the matching
+  CPU/CUDA/ROCm index instead of the unused `torchvision`. This avoids the
+  `OSError: libcudart.so.13: cannot open shared object file` import error.
+- `torchaudio==2.8.0` is now declared in `pyproject.toml` and `requirements.txt`,
+  so its version is pinned to match `torch`.
 
 
 ### Deprecated

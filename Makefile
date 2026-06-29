@@ -1,15 +1,15 @@
 install:
-	uv pip install torch==2.8.0 torchvision==0.23.0 --index-url "https://download.pytorch.org/whl/cpu" && \
+	uv pip install torch==2.8.0 torchaudio==2.8.0 --index-url "https://download.pytorch.org/whl/cpu" && \
 	uv pip install -r requirements.txt
 	uv pip install -e .
 
 cuda_install:
-	uv pip install torch==2.8.0 torchvision==0.23.0 --index-url "https://download.pytorch.org/whl/cu124" && \
+	uv pip install torch==2.8.0 torchaudio==2.8.0 --index-url "https://download.pytorch.org/whl/cu124" && \
 	uv pip install -r requirements.txt
 	uv pip install -e .
 
 rocm_install:
-	uv pip install torch==2.8.0 torchvision==0.23.0 --index-url "https://download.pytorch.org/whl/rocm6.2" && \
+	uv pip install torch==2.8.0 torchaudio==2.8.0 --index-url "https://download.pytorch.org/whl/rocm6.2" && \
 	uv pip install -r requirements.txt
 	uv pip install -e .
 

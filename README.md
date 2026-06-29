@@ -219,13 +219,33 @@ source .venv/bin/activate
 **4. Install PyTorch for your hardware, then the package**
 
 The `Makefile` picks the right PyTorch build for your machine and installs the
-project (editable), registering the command-line tools.
+project (editable), registering the command-line tools. Each target installs
+both `torch` and `torchaudio` from the matching index, so the two always agree.
 
 ```bash
 make install        # CPU only
 make cuda_install   # NVIDIA CUDA
 make rocm_install   # AMD ROCm
 ```
+
+> **Important — always pick the build that matches your hardware.** `torch` and
+> `torchaudio` ship per-hardware wheels (CPU, CUDA, ROCm). If you let `pip`
+> install them from the default index, you may get a CUDA build on a machine
+> with no GPU. You will then see this error at import time:
+> ```
+> OSError: libcudart.so.13: cannot open shared object file: No such file or directory
+> ```
+> This means `torchaudio` was built for CUDA but the CUDA runtime is missing. To
+> fix it, reinstall both packages from the right index:
+> ```bash
+> pip uninstall -y torch torchaudio
+> # CPU only (no GPU):
+> pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+> # NVIDIA CUDA 12.4 (check your driver with nvidia-smi):
+> pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu124
+> ```
+> The `make install` / `make cuda_install` / `make rocm_install` targets already
+> do this for you.
 
 Then run the tests to check everything works:
 
@@ -253,8 +273,12 @@ make test
    uv venv --python 3.10
    .venv\Scripts\activate
    ```
-5. Install the package and its dependencies:
+5. Install PyTorch for your hardware first, then the package:
    ```bash
+   # CPU only (no GPU):
+   uv pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+   # or NVIDIA CUDA 12.4 (check your driver with nvidia-smi):
+   uv pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu124
    uv pip install -e .
    ```
 

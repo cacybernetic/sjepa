@@ -23,9 +23,18 @@ git clone <your-fork-url>
 cd sjepa
 python -m venv .venv
 source .venv/bin/activate          # on Windows: .venv\Scripts\activate
+# Install torch and torchaudio for your hardware FIRST (CPU shown here):
+pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -e ".[onnx]"           # editable install with the ONNX extras
 pip install pytest pytest-cov      # test tools (the dev group)
 ```
+
+`torch` and `torchaudio` ship per-hardware wheels (CPU, CUDA, ROCm). Always
+install them from the matching index, or use the `Makefile` targets
+(`make install`, `make cuda_install`, `make rocm_install`). If you skip this and
+let `pip` resolve them from the default index, you may get a CUDA build on a
+machine with no GPU and hit `OSError: libcudart.so.* cannot open shared object
+file` at import time.
 
 This installs the console commands `trainsjepa`, `evalsjepa`, `buildh5ds`,
 `exportw`, and `runs`.
