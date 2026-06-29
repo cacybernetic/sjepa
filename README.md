@@ -178,13 +178,13 @@ This gives you immediate access to all CLI tools (`trainsjepa`, `buildh5ds`,
 **With pip** (works in any Python environment, no extra tools needed):
 
 ```bash
-pip install git+https://github.com/mokira3d48/sjepa
+pip install git+https://github.com/cacybernetic/sjepa
 ```
 
 **With uv** (faster, after installing `uv`):
 
 ```bash
-uv pip install git+https://github.com/mokira3d48/sjepa
+uv pip install git+https://github.com/cacybernetic/sjepa
 ```
 
 After installation, you can run the commands directly (see [Usage](#usage)) —
@@ -617,12 +617,13 @@ The implementation is based on the following papers and resources:
 
 ### Educational reference
 
-- **gioannides/s-jepa** — Ioannides, G. (2026). Reference implementation of the
-  S-JEPA training recipe.
+- **gioannides/s-jepa** — Ioannides, G. (2026). Reference implementation
+  of the S-JEPA training recipe.
 
 ## Contact
 
 For questions or suggestions:
 
-- **Author**: Arnold Mokira — arnoldmokira3d48@gmail.com
-- **GitHub**: [mokira3d48/sjepa](https://github.com/mokira3d48/sjepa)
+- **Author**: Dr Mokira — arnoldmokira3d48@gmail.com
+- **Maintainer**: Dr Mokira — arnoldmokira3d48@gmail.com
+- **GitHub**: [mokira3d48/sjepa](https://github.com/cacybernetic/sjepa)
