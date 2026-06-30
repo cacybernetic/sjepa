@@ -40,6 +40,14 @@ class _SelectionMetric:
         """Return the average value over the whole pass."""
         return self.meter.average()
 
+    def state_dict(self):
+        """Return the meter state so a partial pass can be resumed."""
+        return self.meter.state_dict()
+
+    def load_state_dict(self, state):
+        """Restore the meter state from a checkpoint."""
+        self.meter.load_state_dict(state)
+
 
 class KlMetric(_SelectionMetric):
     """Mean KL divergence at masked frames (lower is better)."""
@@ -111,6 +119,16 @@ class MetricGroup:
     def compute(self):
         """Return a dict that maps each metric name to its value."""
         return {metric.name: metric.compute() for metric in self.metrics}
+
+    def state_dict(self):
+        """Return every metric's running state, keyed by metric name."""
+        return {metric.name: metric.state_dict() for metric in self.metrics}
+
+    def load_state_dict(self, state):
+        """Restore every metric whose name is present in the saved state."""
+        for metric in self.metrics:
+            if metric.name in state:
+                metric.load_state_dict(state[metric.name])
 
     @staticmethod
     def mode_of(name):

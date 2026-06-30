@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Example single-run two-phase config: `cpu/configs/train_twophase.yaml`.
 - Packaging metadata in `pyproject.toml` (keywords and classifiers).
 - Community files: `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
+- In-epoch (fault-tolerant) checkpointing: a `ResumableDataLoader` adapter
+  (`src/sjepa/dataloader.py`) exposes the shuffle order through
+  `state_dict()/load_state_dict()`, and a full checkpoint is written every
+  `checkpoint.ckpt_step` optimizer steps (or processed batches for val/test). A
+  run interrupted in the middle of a long epoch resumes at the exact batch for
+  the train, validation, and evaluation passes, with the running meters and the
+  data loader positions restored. New configuration key: `checkpoint.ckpt_step`.
 
 
 ### Changed
@@ -62,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In-epoch resume robustness: the adaptive layer selector's smoothed scores are
+  now saved and restored (no cold-start layer flip after a resume); the
+  end-of-epoch checkpoint records the current epoch's best (not a stale one); the
+  validation/evaluation checkpoint cadence no longer skips a dropped (`None`)
+  batch; and a run folder whose only checkpoints use an unreadable older naming
+  scheme is no longer mistaken for a resumable run (which would have restarted
+  from epoch 0 and overwritten it).
 - Training plateau: the Phase 2 machinery (online GMM, switched EMA, adaptive
   layer selection) is now actually engaged, and the learning rate no longer
   decays to near zero during Phase 2.

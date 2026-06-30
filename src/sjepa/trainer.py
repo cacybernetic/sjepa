@@ -91,6 +91,16 @@ class LayerSelector:
                 best_score, best_layer = self.scores[layer], layer
         return best_layer
 
+    def state_dict(self):
+        """Return the smoothed per-layer scores so resume does not start cold."""
+        return {"scores": list(self.scores)}
+
+    def load_state_dict(self, state):
+        """Restore the smoothed scores when the layer count still matches."""
+        scores = state.get("scores")
+        if scores is not None and len(scores) == self.num_layers:
+            self.scores = list(scores)
+
 
 class Trainer:
     """Run the full training loop for S-JEPA."""
@@ -123,6 +133,13 @@ class Trainer:
         self.global_step = 0
         self.epoch_seconds = []
         self._pending = False
+        # In-epoch checkpointing: save every `ckpt_step` optimizer steps (train)
+        # or processed batches (val/test). `_ckpt_seq` is the strictly increasing
+        # save sequence that orders checkpoints; `_resume` carries the cursor read
+        # from a checkpoint so the interrupted pass resumes at the right batch.
+        self.ckpt_step = config.checkpoint.ckpt_step
+        self._ckpt_seq = 0
+        self._resume = None
 
     # ----- gradient accumulation and optimizer step -----
 
@@ -184,21 +201,33 @@ class Trainer:
             opt_step, total, float(result["loss"].detach()),
             comp["loss_masked"], comp["loss_visible"], grad_norm)
 
-    def _train_epoch(self, epoch):
+    def _train_epoch(self, epoch, resume=None):
         """Train for one epoch and return the average train metrics.
 
         The same metrics computed at validation (kl, top1, entropy_bits) are also
         computed here on the training batches, so the history holds a `train_X`
         and a `val_X` series for every metric and the plots overlay the two
         curves to expose overfitting.
+
+        When `resume` is given the epoch resumes mid-way: the data loader is
+        already positioned (its state was restored), and the running loss meter,
+        the train metrics, and the optimizer-step count are restored so the
+        averages and the grad-accumulation alignment continue seamlessly.
         """
         self.model.train()
         loader = self.loaders["train"]
-        bar = StepProgress(len(loader), "train", epoch, self.cfg.train.epochs)
         meters = {"loss": AverageMeter()}
-        self.train_metrics.reset()
+        if resume is None:
+            loader.set_epoch(epoch)
+            self.train_metrics.reset()
+            opt_steps = 0
+        else:
+            meters["loss"].load_state_dict(resume["meters"]["loss"])
+            self.train_metrics.load_state_dict(resume["meters"]["metrics"])
+            opt_steps = resume["meters"]["opt_steps"]
+        total = max(1, len(loader) - loader.batches_done)
+        bar = StepProgress(total, "train", epoch, self.cfg.train.epochs)
         augmentor = self._augmentor()
-        opt_steps = 0
         for index, batch in enumerate(loader):
             if batch is None:
                 continue
@@ -224,6 +253,7 @@ class Trainer:
             self._maybe_select_layer(batch["waveform"].to(self.step.device))
             total = max(1, len(loader) // self.cfg.train.grad_accum)
             self._log_step(epoch, opt_steps, total, grad_norm, result)
+            self._maybe_checkpoint_train(epoch, meters["loss"], opt_steps)
         return opt_steps
 
     def _flush(self, epoch, num_batches, opt_steps):
@@ -240,25 +270,39 @@ class Trainer:
     # ----- validation -----
 
     @torch.no_grad()
-    def _validate(self, loader, stage, epoch):
-        """Run a validation pass and return the metric values.
+    def _validate(self, loader, stage, epoch, resume=None, extra_payload=None):
+        """Run a validation or evaluation pass and return the metric values.
 
         The total objective loss is averaged here too (same definition as in
         training) so the `loss` plot overlays comparable train and val curves,
         alongside kl, top1, and entropy_bits.
+
+        With `resume` the pass continues from a mid-pass checkpoint: the loader
+        is already positioned and the running meters are restored. `extra_payload`
+        holds fields stitched into any in-epoch checkpoint written here (for the
+        validation pass, the already-computed train metrics of this epoch).
         """
         self.model.eval()
-        self.metrics.reset()
         loss_meter = AverageMeter()
-        bar = StepProgress(len(loader), stage, epoch, self.cfg.train.epochs)
+        if resume is None:
+            loader.set_epoch(epoch)
+            self.metrics.reset()
+        else:
+            loss_meter.load_state_dict(resume["meters"]["loss"])
+            self.metrics.load_state_dict(resume["meters"]["metrics"])
+        total = max(1, len(loader) - loader.batches_done)
+        bar = StepProgress(total, stage, epoch, self.cfg.train.epochs)
         for batch in loader:
-            if batch is None:
-                continue
-            result = self.step.run(batch, self.targets, augmentor=None)
-            loss_meter.update(float(result["loss"].detach()))
-            self.metrics.update(result["logits_masked"], result["targets"],
-                                result["selection"])
-            bar.update(self.metrics.compute())
+            if batch is not None:
+                result = self.step.run(batch, self.targets, augmentor=None)
+                loss_meter.update(float(result["loss"].detach()))
+                self.metrics.update(result["logits_masked"], result["targets"],
+                                    result["selection"])
+                bar.update(self.metrics.compute())
+            # Checked on every batch (even a dropped None one) so the loader
+            # position is captured at the right cadence and never skipped.
+            self._maybe_checkpoint_eval(epoch, stage, loader, loss_meter,
+                                        extra_payload)
         bar.close()
         values = self.metrics.compute()
         values["loss"] = loss_meter.average()
@@ -266,11 +310,26 @@ class Trainer:
 
     # ----- checkpoint and resume -----
 
-    def _checkpoint_payload(self, epoch):
-        """Build the full state payload saved at the end of an epoch."""
+    def _loader_states(self):
+        """Capture the resumable state of every data loader."""
+        states = {}
+        for name, loader in self.loaders.items():
+            if hasattr(loader, "state_dict"):
+                states[name] = loader.state_dict()
+        return states
+
+    def _checkpoint_payload(self, epoch, stage, extra=None):
+        """Build the full state payload for one checkpoint.
+
+        `stage` records where the epoch was interrupted ("train", "val", "test",
+        or "done" for an end-of-epoch checkpoint) so the run resumes at the right
+        place. `extra` carries the running meters and, for the validation pass,
+        the already-computed train metrics of this epoch.
+        """
         payload = {
             "epoch": epoch,
             "global_step": self.global_step,
+            "ckpt_seq": self._ckpt_seq,
             "phase": self.current_phase,
             "num_clusters": self.model.config.num_clusters,
             "use_visible_loss": self.step.objective.use_visible_loss,
@@ -279,12 +338,51 @@ class Trainer:
             "scheduler": self.scheduler.state_dict(),
             "best": self.best.best,
             "epoch_seconds": self.epoch_seconds,
+            "cursor": {"stage": stage},
+            "loaders": self._loader_states(),
         }
         if self.phase2 is not None:
             payload["ema"] = self.phase2["ema"].state_dict()
             payload["gmm"] = self.targets.gmm.state_dict()
             payload["layer"] = self.targets.layer
+            if self.phase2.get("selector") is not None:
+                payload["selector"] = self.phase2["selector"].state_dict()
+        if extra:
+            payload.update(extra)
         return payload
+
+    def _save_checkpoint(self, epoch, stage, extra=None):
+        """Write one checkpoint with a fresh, strictly increasing sequence."""
+        self._ckpt_seq += 1
+        payload = self._checkpoint_payload(epoch, stage, extra)
+        self.ckpt.save(payload, epoch, self.global_step, self._ckpt_seq)
+
+    def _maybe_checkpoint_train(self, epoch, loss_meter, opt_steps):
+        """Write an in-epoch checkpoint every `ckpt_step` optimizer steps."""
+        if self.ckpt_step <= 0 or self.global_step % self.ckpt_step != 0:
+            return
+        extra = {"meters": {"loss": loss_meter.state_dict(),
+                            "metrics": self.train_metrics.state_dict(),
+                            "opt_steps": opt_steps}}
+        self._save_checkpoint(epoch, "train", extra)
+
+    def _maybe_checkpoint_eval(self, epoch, stage, loader, loss_meter,
+                               extra_payload):
+        """Write an in-epoch checkpoint every `ckpt_step` processed batches."""
+        if self.ckpt_step <= 0 or loader.batches_done % self.ckpt_step != 0:
+            return
+        extra = {"meters": {"loss": loss_meter.state_dict(),
+                            "metrics": self.metrics.state_dict()}}
+        if extra_payload:
+            extra.update(extra_payload)
+        self._save_checkpoint(epoch, stage, extra)
+
+    def _restore_loaders(self, loader_states):
+        """Restore the data loader positions from a checkpoint."""
+        for name, state in (loader_states or {}).items():
+            loader = self.loaders.get(name)
+            if loader is not None and hasattr(loader, "load_state_dict"):
+                loader.load_state_dict(state)
 
     def load_checkpoint(self, path):
         """Restore the full training state from a checkpoint file."""
@@ -305,13 +403,35 @@ class Trainer:
         self.model.load_state_dict(state["model"])
         self.optimizer.load_state_dict(state["optimizer"])
         self.scheduler.load_state_dict(state["scheduler"])
-        self.start_epoch = state["epoch"] + 1
         self.global_step = state.get("global_step", 0)
+        self._ckpt_seq = state.get("ckpt_seq", 0)
         self.best.best = state.get("best")
         self.epoch_seconds = state.get("epoch_seconds", [])
         self._restore_phase2(state)
-        _LOGGER.info(colorize("Resumed from {} at epoch {}", "yellow"),
-                     path, self.start_epoch)
+        self._restore_cursor(state, path)
+
+    def _restore_cursor(self, state, path):
+        """Set the resume point from the checkpoint's in-epoch cursor.
+
+        An end-of-epoch checkpoint ("done", or an old checkpoint without a
+        cursor) resumes at the next epoch. A mid-epoch checkpoint ("train" or
+        "val") resumes inside the same epoch; a "test" checkpoint resumes the
+        final evaluation after the epoch loop. In every mid-pass case the loader
+        positions and the running meters are restored before the pass continues.
+        """
+        epoch = state["epoch"]
+        stage = state.get("cursor", {}).get("stage", "done")
+        if stage == "done":
+            self.start_epoch = epoch + 1
+            self._resume = None
+        elif stage == "test":
+            self.start_epoch = self.cfg.train.epochs
+            self._resume = state
+        else:  # "train" or "val": resume inside this epoch
+            self.start_epoch = epoch
+            self._resume = state
+        _LOGGER.info(colorize("Resumed from {} at epoch {} (stage {})", "yellow"),
+                     path, self.start_epoch, stage)
 
     def _restore_phase2(self, state):
         """Restore the EMA encoder, online GMM, and layer (Phase 2 only)."""
@@ -322,6 +442,8 @@ class Trainer:
         self.targets.gmm = OnlineGMM.from_state_dict(
             state["gmm"], device=self.step.device)
         self.targets.set_layer(state.get("layer", self.targets.layer))
+        if "selector" in state and self.phase2.get("selector") is not None:
+            self.phase2["selector"].load_state_dict(state["selector"])
 
     def load_weights(self, path):
         """Warm start the model from a saved weight file."""
@@ -353,10 +475,14 @@ class Trainer:
         return row
 
     def _save_epoch_outputs(self, epoch, val_metrics):
-        """Save the checkpoint, the last weights, and the best weights."""
-        self.ckpt.save(self._checkpoint_payload(epoch), epoch)
-        self.weights.save(self.model, "last.pt", {"epoch": epoch})
+        """Save the checkpoint, the last weights, and the best weights.
+
+        The best tracker is updated first so the end-of-epoch checkpoint records
+        this epoch's best, not a stale value from the previous epoch.
+        """
         improved, value = self.best.update(val_metrics)
+        self._save_checkpoint(epoch, "done")
+        self.weights.save(self.model, "last.pt", {"epoch": epoch})
         if improved:
             self.weights.save(self.model, "best.pt",
                               {"epoch": epoch, self.best.metric: value})
@@ -364,14 +490,32 @@ class Trainer:
                          self.best.metric, value)
 
     def _run_epoch(self, epoch, epoch_bar):
-        """Run one full epoch: train, validate, record, save."""
+        """Run one full epoch: train, validate, record, save.
+
+        When `self._resume` points into this epoch the interrupted pass continues
+        from its checkpoint: loader positions are restored first, the phase
+        transition is skipped (it already fired and its state was restored), and
+        the train pass is either resumed or skipped depending on the saved stage.
+        """
         import time
         start = time.time()
+        resume = self._resume
+        self._resume = None
         _LOGGER.info(banner(f"Starting epoch {epoch}/{self.cfg.train.epochs}"))
-        if self.phase_scheduler is not None:
+        if resume is not None:
+            self._restore_loaders(resume.get("loaders"))
+        elif self.phase_scheduler is not None:
             self.phase_scheduler.on_epoch_start(self, epoch)
-        train_metrics = self._train_epoch(epoch)
-        val_metrics = self._validate(self.loaders["val"], "val", epoch)
+        stage = resume["cursor"]["stage"] if resume else "train"
+        if stage == "train":
+            train_metrics = self._train_epoch(epoch, resume)
+            val_resume = None
+        else:  # resuming inside the validation pass
+            train_metrics = resume["train_metrics"]
+            val_resume = resume
+        val_metrics = self._validate(self.loaders["val"], "val", epoch,
+                                     resume=val_resume,
+                                     extra_payload={"train_metrics": train_metrics})
         self._record_epoch(epoch, train_metrics, val_metrics)
         self._save_epoch_outputs(epoch, val_metrics)
         self.epoch_seconds.append(time.time() - start)
@@ -391,10 +535,20 @@ class Trainer:
         return self.best.best
 
     def final_evaluate(self):
-        """Evaluate the model on the whole test set after training."""
+        """Evaluate the model on the whole test set after training.
+
+        A long evaluation can itself be checkpointed and resumed: when a "test"
+        cursor was restored, the pass continues from the saved batch and meters.
+        """
         _LOGGER.info(banner("Final evaluation on the full test set"))
         last_epoch = max(0, self.cfg.train.epochs - 1)
-        values = self._validate(self.loaders["test"], "test", last_epoch)
+        resume = None
+        if self._resume and self._resume["cursor"]["stage"] == "test":
+            resume = self._resume
+            self._resume = None
+            self._restore_loaders(resume.get("loaders"))
+        values = self._validate(self.loaders["test"], "test", last_epoch,
+                                resume=resume)
         for name, value in values.items():
             _LOGGER.info("  test {:<14} = {:.4f}", name, value)
         return values

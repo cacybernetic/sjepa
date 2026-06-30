@@ -13,8 +13,9 @@ user switches between them with `dataset.use_hdf5` in the config.
 from __future__ import annotations
 
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import Subset
 
+from .dataloader import ResumableDataLoader
 from .dataset.dataset import AudioDataset, WaveformCollator
 from .dataset.filtering import load_or_build_cache
 from .dataset.hdf5 import Hdf5AudioDataset
@@ -73,11 +74,11 @@ class DataModule:
         return Subset(test_dataset, self._val_indices)
 
     def _loader(self, dataset, shuffle):
-        """Wrap a dataset in a DataLoader with the shared collate function."""
-        return DataLoader(
+        """Wrap a dataset in a resumable DataLoader for in-epoch checkpointing."""
+        return ResumableDataLoader(
             dataset, batch_size=self.cfg.train.batch_size, shuffle=shuffle,
-            num_workers=self.data_cfg.num_workers, collate_fn=self.collator,
-            pin_memory=False, drop_last=False)
+            seed=self.cfg.seed, num_workers=self.data_cfg.num_workers,
+            collate_fn=self.collator, pin_memory=False, drop_last=False)
 
     def build(self):
         """Return a dict with the train, val, and test loaders and sizes."""

@@ -43,5 +43,11 @@ gmm:
   fit_frames: 50000
   path: null
 
+checkpoint:
+  dir: null
+  max_checkpoint: 5
+  resume: false
+  ckpt_step: 0           # in-epoch checkpoint every N processed batches (0 = off)
+
 best:
   metric: kl

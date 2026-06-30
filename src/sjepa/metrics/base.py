@@ -31,3 +31,12 @@ class AverageMeter:
         if self.count <= 0:
             return 0.0
         return self.total / self.count
+
+    def state_dict(self):
+        """Return the running totals so a partial pass can be resumed."""
+        return {"total": self.total, "count": self.count}
+
+    def load_state_dict(self, state):
+        """Restore the running totals from a checkpoint."""
+        self.total = float(state["total"])
+        self.count = float(state["count"])

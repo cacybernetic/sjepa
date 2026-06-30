@@ -83,6 +83,8 @@ For a friendly, step-by-step explanation of the ideas, read
   warmup + cosine schedule.
 - **Full checkpointing** (model, optimizer, scheduler, GMM, EMA) with rotation,
   deterministic **resume**, **best** and **last** weights.
+- **In-epoch (fault-tolerant) checkpointing**: save and resume mid-epoch at the
+  exact batch via a resumable data loader, so a multi-day epoch survives a crash.
 - **Per-epoch history** CSV and train-vs-validation plots (overfitting check).
 - **Geeky terminal output**: loguru logging into files plus two tqdm bars
   (epoch and step).
@@ -125,6 +127,7 @@ For a friendly, step-by-step explanation of the ideas, read
 │       ├── trainer.py         # the epoch loop (the engine)
 │       ├── assembly.py        # wire everything into a ready Trainer
 │       ├── data_module.py     # train / val / test data loaders
+│       ├── dataloader.py      # resumable DataLoader (in-epoch checkpointing)
 │       ├── checkpointing.py   # save, rotate, resume; best.pt and last.pt
 │       ├── rundir.py          # runs/<name>/train, train2, ... folders
 │       ├── history.py         # per-epoch history CSV
@@ -360,7 +363,7 @@ runs/sjepa_base/train/
     best.pt            # best validation score
     last.pt            # last epoch
   checkpoints/
-    epoch_000.pth      # full state (model, optimizer, scheduler, GMM, EMA)
+    ckpt_e000_s000000012_n000000001.pth   # full state (epoch, step, sequence)
   plotes/
     history_kl.jpg     # train vs val curves (overfitting check)
   logs/
@@ -370,6 +373,14 @@ runs/sjepa_base/train/
 To continue an interrupted run, set `checkpoint.resume: true`. When a usable
 checkpoint exists, training reuses the highest-numbered run folder and continues
 from the last checkpoint.
+
+For very long epochs, enable **in-epoch (fault-tolerant) checkpointing** with
+`checkpoint.ckpt_step: N`: a full checkpoint is written every `N` optimizer steps
+during training (and every `N` batches during validation and evaluation). A run
+interrupted in the middle of an epoch resumes at the exact batch — the shuffle
+order, the running metrics, and the data loader positions are all restored — so
+no work is replayed. Leave `ckpt_step: 0` to checkpoint only at the end of each
+epoch. Old checkpoints beyond `checkpoint.max_checkpoint` are rotated out.
 
 ### 3. Evaluate
 

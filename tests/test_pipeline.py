@@ -11,6 +11,7 @@ import zipfile
 
 import numpy as np
 import soundfile as sf
+import torch
 import yaml
 
 from sjepa.entrypoints import train as train_entry
@@ -66,5 +67,112 @@ def test_training_pipeline_outputs(tmp_path, monkeypatch):
     assert (run_dir / "weights" / "best.pt").exists()
     assert (run_dir / "weights" / "last.pt").exists()
     assert (run_dir / "history.csv").exists()
-    assert (run_dir / "checkpoints" / "epoch_000.pth").exists()
+    assert any((run_dir / "checkpoints").glob("ckpt_e000_*.pth"))
     assert any((run_dir / "plotes").iterdir())
+
+
+def test_in_epoch_checkpoint_and_resume(tmp_path, monkeypatch):
+    """A small ckpt_step writes mid-epoch checkpoints and a resume finishes."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _sine_zip(str(data_dir / "train.zip"), 12)
+    _sine_zip(str(data_dir / "test.zip"), 4, base=300)
+    config = _tiny_config(str(data_dir))
+    config["train"]["epochs"] = 2
+    config["train"]["grad_accum"] = 1
+    config["checkpoint"] = {"max_checkpoint": 20, "resume": False, "ckpt_step": 1}
+    config_path = tmp_path / "train.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+    monkeypatch.chdir(tmp_path)
+
+    train_entry.run(str(config_path))
+    ckpt_dir = tmp_path / "runs" / "pytest" / "train" / "checkpoints"
+
+    # Mid-epoch ("train") checkpoints were written with the full resumable state.
+    stages = []
+    for path in ckpt_dir.glob("ckpt_*.pth"):
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        stages.append(payload["cursor"]["stage"])
+        assert "loaders" in payload and "train" in payload["loaders"]
+        assert "ckpt_seq" in payload
+    assert "train" in stages          # at least one mid-epoch checkpoint
+    assert "done" in stages           # and the end-of-epoch one
+
+    # A resume run reuses the folder and completes without error.
+    config["checkpoint"]["resume"] = True
+    config_path.write_text(yaml.safe_dump(config))
+    train_entry.run(str(config_path))
+    run_dir = tmp_path / "runs" / "pytest" / "train"
+    assert (run_dir / "weights" / "last.pt").exists()
+
+
+class _Boom(Exception):
+    """Marker exception used to simulate a crash mid-epoch."""
+
+
+def _read_history_epochs(csv_path):
+    """Return the list of epoch numbers recorded in a history CSV."""
+    import csv
+    with open(csv_path, encoding="utf-8", newline="") as handle:
+        return [int(row["epoch"]) for row in csv.DictReader(handle)]
+
+
+def test_crash_mid_epoch_then_resume_finishes(tmp_path, monkeypatch):
+    """A crash in the middle of an epoch resumes at the right batch and finishes.
+
+    The first run is forced to crash right after its second in-epoch ("train")
+    checkpoint, so the data loader is parked mid-epoch and no history row has been
+    written yet. The resumed run must continue the same epoch (not restart it),
+    complete every epoch, and leave the history with exactly one row per epoch
+    (no duplicate from a replayed epoch).
+    """
+    from sjepa.trainer import Trainer
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _sine_zip(str(data_dir / "train.zip"), 12)
+    _sine_zip(str(data_dir / "test.zip"), 4, base=300)
+    config = _tiny_config(str(data_dir))
+    config["train"]["epochs"] = 2
+    config["train"]["batch_size"] = 3
+    config["train"]["grad_accum"] = 1
+    config["checkpoint"] = {"max_checkpoint": 50, "resume": False, "ckpt_step": 1}
+    config_path = tmp_path / "train.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+    monkeypatch.chdir(tmp_path)
+
+    # Crash after the second mid-epoch train checkpoint (loader parked at batch 2
+    # of the 4 train batches in epoch 0).
+    real_save = Trainer._save_checkpoint
+    seen = {"train": 0}
+
+    def crashing_save(self, epoch, stage, extra=None):
+        real_save(self, epoch, stage, extra)
+        if stage == "train":
+            seen["train"] += 1
+            if seen["train"] == 2:
+                raise _Boom()
+
+    monkeypatch.setattr(Trainer, "_save_checkpoint", crashing_save)
+    try:
+        train_entry.run(str(config_path))
+        raise AssertionError("the run was expected to crash mid-epoch")
+    except _Boom:
+        pass
+    monkeypatch.setattr(Trainer, "_save_checkpoint", real_save)
+
+    run_dir = tmp_path / "runs" / "pytest" / "train"
+    # The crash happened before epoch 0 finished, so no history row exists yet.
+    assert not (run_dir / "history.csv").exists()
+    latest = torch.load(
+        sorted((run_dir / "checkpoints").glob("ckpt_*.pth"))[-1],
+        map_location="cpu", weights_only=False)
+    assert latest["cursor"]["stage"] == "train"
+    assert 0 < latest["loaders"]["train"]["batches_done"] < 4
+
+    # Resume: must finish both epochs with exactly one history row each.
+    config["checkpoint"]["resume"] = True
+    config_path.write_text(yaml.safe_dump(config))
+    train_entry.run(str(config_path))
+    assert (run_dir / "weights" / "last.pt").exists()
+    assert _read_history_epochs(run_dir / "history.csv") == [0, 1]

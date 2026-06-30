@@ -186,6 +186,9 @@ class CheckpointConfig:
     dir: object = None
     max_checkpoint: int = 5
     resume: bool = False
+    # Save a full in-epoch checkpoint every `ckpt_step` optimizer steps (train)
+    # or processed batches (val/test). 0 = end-of-epoch checkpoints only.
+    ckpt_step: int = 0
 
     @classmethod
     def from_dict(cls, data):

@@ -107,7 +107,7 @@ def test_run_resume_reuses_folder(tmp_path):
     """Resume reuses the latest folder that has a checkpoint."""
     manager = RunDirectoryManager(str(tmp_path), "demo", "train")
     layout, _ = manager.resolve(resume=False)
-    CheckpointManager(layout.checkpoints_dir).save({"epoch": 0}, 0)
+    CheckpointManager(layout.checkpoints_dir).save({"epoch": 0}, 0, 0, 1)
     reused, resumed = manager.resolve(resume=True)
     assert resumed
     assert reused.root == layout.root
@@ -119,9 +119,43 @@ def test_checkpoint_rotation(tmp_path):
     """Only the newest checkpoints are kept on disk."""
     manager = CheckpointManager(str(tmp_path), max_checkpoints=2)
     for epoch in range(4):
-        manager.save({"epoch": epoch}, epoch)
-    assert manager._epochs() == [2, 3]
-    assert manager.latest_path().endswith("epoch_003.pth")
+        manager.save({"epoch": epoch}, epoch, global_step=epoch, seq=epoch)
+    assert [seq for seq, _ in manager._entries()] == [2, 3]
+    assert manager.latest_path().endswith("ckpt_e003_s000000003_n000000003.pth")
+
+
+def test_metric_group_state_roundtrip():
+    """A MetricGroup restores its running averages from a state dict."""
+    logits = torch.randn(2, 5, 12)
+    targets = torch.softmax(torch.randn(2, 5, 12), dim=-1)
+    selection = torch.ones(2, 5, dtype=torch.bool)
+    group = MetricGroup()
+    group.update(logits, targets, selection)
+    saved = group.compute()
+    state = group.state_dict()
+
+    restored = MetricGroup()
+    restored.load_state_dict(state)
+    for name, value in saved.items():
+        assert math.isclose(restored.compute()[name], value, rel_tol=1e-6)
+
+
+def test_layer_selector_state_roundtrip():
+    """The adaptive layer selector keeps its smoothed scores across a resume."""
+    from sjepa.trainer import LayerSelector
+
+    selector = LayerSelector(num_layers=4, decay=0.9)
+    selector.scores = [0.1, 0.5, 0.3, 0.2]
+    state = selector.state_dict()
+
+    restored = LayerSelector(num_layers=4, decay=0.9)
+    restored.load_state_dict(state)
+    assert restored.scores == [0.1, 0.5, 0.3, 0.2]
+
+    # A mismatching layer count is ignored rather than corrupting the selector.
+    mismatched = LayerSelector(num_layers=3, decay=0.9)
+    mismatched.load_state_dict(state)
+    assert mismatched.scores == [None, None, None]
 
 
 def test_weight_saver_roundtrip(tmp_path):

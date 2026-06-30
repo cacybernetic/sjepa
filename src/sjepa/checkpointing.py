@@ -1,13 +1,20 @@
 """Save and restore the full training state.
 
-The spec asks for a checkpoint at the end of every epoch that holds the whole
-state: model weights, optimizer, scheduler, epoch, step, best score, history,
-and the extra Phase 2 state (EMA encoder and online GMM). It also asks to keep
-only the newest few checkpoints and to delete the oldest ones.
+A checkpoint holds the whole state: model weights, optimizer, scheduler, epoch,
+global step, best score, the in-epoch cursor and data loader positions, and the
+extra Phase 2 state (EMA encoder and online GMM). Checkpoints are written both at
+the end of an epoch and, for in-epoch checkpointing, every `ckpt_step` steps. The
+manager keeps only the newest few and deletes the oldest ones.
+
+Each file is named `ckpt_e{epoch:03d}_s{global_step:09d}_n{seq:09d}.pth`. The
+global step does not advance during validation or evaluation, so it cannot order
+those in-epoch checkpoints on its own; a strictly increasing save sequence `seq`
+gives a total chronological order over every checkpoint. Rotation and "latest"
+both use `seq` as the key, while the epoch and step stay in the name for reading.
 
 Two responsibilities live here, each in its own class:
 
-  * `CheckpointManager`: write, rotate, and find epoch checkpoints.
+  * `CheckpointManager`: write, rotate, and find checkpoints.
   * `WeightSaver`: write the plain model weights for best.pt and last.pt.
 """
 
@@ -21,13 +28,23 @@ import torch
 from .logging import get_logger
 
 _LOGGER = get_logger()
-_EPOCH_RE = re.compile(r"epoch_(\d+)\.pth")
+_CKPT_RE = re.compile(r"ckpt_e(\d+)_s(\d+)_n(\d+)\.pth")
 
 
-def _epoch_of(name):
-    """Return the epoch number stored in a checkpoint file name, or None."""
-    match = _EPOCH_RE.fullmatch(name)
-    return int(match.group(1)) if match else None
+def _seq_of(name):
+    """Return the save sequence number in a checkpoint file name, or None."""
+    match = _CKPT_RE.fullmatch(name)
+    return int(match.group(3)) if match else None
+
+
+def is_checkpoint_file(name):
+    """Return True when a file name is a checkpoint the manager can load.
+
+    Used by the run-folder resolver so a folder that only holds checkpoints in an
+    older, unreadable naming scheme is not mistaken for a resumable run (which
+    would silently restart from epoch 0 and overwrite it).
+    """
+    return _CKPT_RE.fullmatch(name) is not None
 
 
 class CheckpointManager:
@@ -40,30 +57,45 @@ class CheckpointManager:
         self.max_checkpoints = max_checkpoints
         os.makedirs(self.dir, exist_ok=True)
 
-    def _epochs(self):
-        """Return the sorted list of epoch numbers found on disk."""
-        numbers = []
+    def _entries(self):
+        """Return the checkpoint files on disk as (seq, name), sorted by seq."""
+        entries = []
         for name in os.listdir(self.dir):
-            epoch = _epoch_of(name)
-            if epoch is not None:
-                numbers.append(epoch)
-        return sorted(numbers)
+            seq = _seq_of(name)
+            if seq is not None:
+                entries.append((seq, name))
+        return sorted(entries)
 
-    def _path(self, epoch):
-        """Return the file path for one epoch checkpoint."""
-        return os.path.join(self.dir, f"epoch_{epoch:03d}.pth")
+    def _path(self, epoch, global_step, seq):
+        """Return the file path for one checkpoint."""
+        return os.path.join(
+            self.dir, f"ckpt_e{epoch:03d}_s{global_step:09d}_n{seq:09d}.pth")
 
     def _rotate(self):
         """Delete the oldest checkpoints beyond the keep limit."""
-        epochs = self._epochs()
-        extra = len(epochs) - self.max_checkpoints
-        for epoch in epochs[:max(0, extra)]:
-            os.remove(self._path(epoch))
-            _LOGGER.info("Removed old checkpoint epoch {}", epoch)
+        entries = self._entries()
+        extra = len(entries) - self.max_checkpoints
+        for seq, name in entries[:max(0, extra)]:
+            os.remove(os.path.join(self.dir, name))
+            _LOGGER.info("Removed old checkpoint {} (seq {})", name, seq)
 
-    def save(self, payload, epoch):
-        """Write one checkpoint and rotate the old ones. Returns the path."""
-        path = self._path(epoch)
+    def latest_seq(self):
+        """Return the highest save sequence on disk, or -1 when empty."""
+        entries = self._entries()
+        return entries[-1][0] if entries else -1
+
+    def save(self, payload, epoch, global_step=None, seq=None):
+        """Write one checkpoint and rotate the old ones. Returns the path.
+
+        `seq` is the strictly increasing save sequence that keys the file name
+        and the rotation order. It is read from the payload (`ckpt_seq`) when not
+        passed explicitly; `global_step` defaults the same way.
+        """
+        if global_step is None:
+            global_step = int(payload.get("global_step", 0))
+        if seq is None:
+            seq = int(payload.get("ckpt_seq", 0))
+        path = self._path(epoch, global_step, seq)
         torch.save(payload, path)
         _LOGGER.info("Saved checkpoint to {}", path)
         self._rotate()
@@ -71,10 +103,14 @@ class CheckpointManager:
 
     def latest_path(self):
         """Return the path of the newest checkpoint, or None when there is none."""
-        epochs = self._epochs()
-        if not epochs:
+        entries = self._entries()
+        if not entries:
             return None
-        return self._path(epochs[-1])
+        return os.path.join(self.dir, entries[-1][1])
+
+    def has_checkpoint(self):
+        """Return True when at least one checkpoint exists on disk."""
+        return bool(self._entries())
 
     @staticmethod
     def load(path, map_location="cpu"):

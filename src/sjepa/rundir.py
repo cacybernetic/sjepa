@@ -22,6 +22,8 @@ from __future__ import annotations
 import os
 import re
 
+from .checkpointing import is_checkpoint_file
+
 
 def _index_of(name, kind):
     """Return the run number from a folder name, or None when it does not match.
@@ -111,7 +113,7 @@ class RunDirectoryManager:
         folder = layout.checkpoints_dir
         if not os.path.isdir(folder):
             return False
-        return any(name.endswith(".pth") for name in os.listdir(folder))
+        return any(is_checkpoint_file(name) for name in os.listdir(folder))
 
     def _resume_index(self):
         """Return the highest existing run number that has a checkpoint."""
