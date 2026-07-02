@@ -74,7 +74,8 @@ class Phase1GmmProvider:
         """Stream MFCC frames from a waveform loader into a reservoir."""
         reservoir = ReservoirSampler(self.config.fit_frames, self.extractor.dim)
         extractor = self.extractor.to(device)
-        for batch in loader:
+        batches = loader.full_iter() if hasattr(loader, "full_iter") else loader
+        for batch in batches:
             if batch is None or reservoir.filled >= self.config.fit_frames:
                 break
             waveform = batch["waveform"].squeeze(1).to(device)
@@ -110,7 +111,9 @@ class OnlineGmmSeeder:
     def _collect(self, ema_encoder, dataloader, layer, device, dim):
         """Collect encoder features from a few batches into a reservoir."""
         reservoir = ReservoirSampler(self.config.fit_frames, dim, device=device)
-        for batch in dataloader:
+        batches = dataloader.full_iter() if hasattr(dataloader, "full_iter") \
+            else dataloader
+        for batch in batches:
             if batch is None or reservoir.filled >= self.config.fit_frames:
                 break
             waveform = batch["waveform"].to(device)

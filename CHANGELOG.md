@@ -69,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Phase 1 -> Phase 2 GMM seeding no longer crashes with "need at least K frames
+  to fit a K-component GMM". The seeder iterated the resumable training loader,
+  which at the transition is parked at the end of the previous epoch and yielded
+  zero remaining batches. Seeding now uses a non-mutating `full_iter()` that
+  reads the whole epoch and leaves the training position untouched.
 - In-epoch resume robustness: the adaptive layer selector's smoothed scores are
   now saved and restored (no cold-start layer flip after a resume); the
   end-of-epoch checkpoint records the current epoch's best (not a stale one); the

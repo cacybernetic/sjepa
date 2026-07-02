@@ -100,6 +100,23 @@ class ResumableDataLoader:
             self._batches_done += 1
             yield batch
 
+    def full_iter(self):
+        """Iterate one full epoch without touching the resumable position.
+
+        Read-only passes that consume the training loader for a side purpose
+        (for example seeding a GMM at a phase transition) must not disturb the
+        training loop's saved position, nor skip batches when the loader is
+        parked at the end of the previous epoch. This yields every batch of the
+        current epoch order from the start and restores the position afterwards.
+        """
+        saved = self._batches_done
+        self._batches_done = 0
+        try:
+            for batch in self.__iter__():
+                yield batch
+        finally:
+            self._batches_done = saved
+
     def __len__(self):
         """Return the total number of batches in one full epoch."""
         total = len(self.dataset)

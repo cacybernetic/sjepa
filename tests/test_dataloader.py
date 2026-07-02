@@ -103,3 +103,20 @@ def test_len_matches_iteration():
     loader.set_epoch(0)
     count = sum(1 for _ in loader)
     assert count == len(loader) == 6   # ceil(23 / 4)
+
+
+def test_full_iter_ignores_position_and_restores_it():
+    """full_iter yields the whole epoch even when parked at the end, and the
+    resumable position is left untouched (regression: GMM seeding at a phase
+    transition consumed the loader parked at end-of-previous-epoch, yielding
+    zero batches)."""
+    loader = _make()
+    loader.set_epoch(2)
+    _all_indices(loader)                       # consume the whole epoch
+    assert loader.batches_done == len(loader)  # parked at the end
+
+    full = []
+    for batch in loader.full_iter():
+        full.extend(batch.tolist())
+    assert sorted(full) == list(range(23))     # whole epoch, not zero batches
+    assert loader.batches_done == len(loader)  # position preserved
