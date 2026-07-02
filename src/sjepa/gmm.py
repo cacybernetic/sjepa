@@ -178,9 +178,12 @@ class _KMeans:
 
     @staticmethod
     def _assign(features, centroids):
-        """Return the nearest centroid index for each row."""
-        distances = torch.cdist(features, centroids)
-        return distances.argmin(dim=1)
+        """Return the nearest centroid index for each row (chunked over rows)."""
+        labels = features.new_empty(features.shape[0], dtype=torch.long)
+        for start in range(0, features.shape[0], _CHUNK_N):
+            chunk = features[start:start + _CHUNK_N]
+            labels[start:start + _CHUNK_N] = torch.cdist(chunk, centroids).argmin(dim=1)
+        return labels
 
     def _init_centroids(self, features):
         """Pick K random rows as the first centroids."""
@@ -237,13 +240,26 @@ class GMMFitter:
 
     @staticmethod
     def _em_step(gmm, features):
-        """Run one EM step and return a new GMM with updated parameters."""
-        resp = gmm.posteriors(features)
-        counts = resp.sum(dim=0).clamp(min=1e-8)
-        means = (resp.t() @ features) / counts.unsqueeze(1)
-        diff = features.unsqueeze(1) - means.unsqueeze(0)
-        weighted = resp.unsqueeze(2) * diff * diff
-        variances = weighted.sum(dim=0) / counts.unsqueeze(1)
+        """Run one EM step and return a new GMM with updated parameters.
+
+        The sufficient statistics are accumulated over row chunks so no
+        (N, K, D) tensor is ever materialized. For a diagonal GMM the per
+        component variance is the closed form ``E[x^2] - E[x]^2`` weighted by
+        the responsibilities, which needs only (K, D) running sums.
+        """
+        num_k, dim = gmm.num_clusters, gmm.dim
+        counts = features.new_zeros(num_k)
+        sum_x = features.new_zeros(num_k, dim)
+        sum_x2 = features.new_zeros(num_k, dim)
+        for start in range(0, features.shape[0], _CHUNK_N):
+            chunk = features[start:start + _CHUNK_N]
+            resp = gmm.posteriors(chunk)              # (M, K)
+            counts += resp.sum(dim=0)
+            sum_x += resp.t() @ chunk                 # (K, D)
+            sum_x2 += resp.t() @ (chunk * chunk)      # (K, D)
+        counts = counts.clamp(min=1e-8)
+        means = sum_x / counts.unsqueeze(1)
+        variances = sum_x2 / counts.unsqueeze(1) - means * means
         weights = counts / counts.sum()
         return DiagonalGMM(means, variances, weights)
 

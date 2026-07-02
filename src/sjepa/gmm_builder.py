@@ -13,11 +13,25 @@ from __future__ import annotations
 import os
 
 import torch
+from tqdm import tqdm
 
 from .dataset.audio import AudioLoader
 from .dataset.features import MfccExtractor
 from .dataset.readers import ArchiveReader
 from .gmm import DiagonalGMM, GMMFitter, OnlineGMM, ReservoirSampler
+
+
+def _frames_bar(total_frames, desc):
+    """A small sub progress bar (leave=False) tracking collected frames.
+
+    Matches the indented step-bar style used during training so the GMM
+    seeding / fitting pass shows its own live progress toward `fit_frames`.
+    """
+    return tqdm(
+        total=total_frames, leave=False, desc=f"    {desc}", ascii="░█",
+        unit="frame", dynamic_ncols=True,
+        bar_format="    {desc}: {percentage:3.0f}%|{bar}| "
+                   "{n_fmt}/{total_fmt} frames [{elapsed}<{remaining}]")
 from .logging import get_logger
 
 _LOGGER = get_logger()
@@ -75,12 +89,16 @@ class Phase1GmmProvider:
         reservoir = ReservoirSampler(self.config.fit_frames, self.extractor.dim)
         extractor = self.extractor.to(device)
         batches = loader.full_iter() if hasattr(loader, "full_iter") else loader
+        bar = _frames_bar(self.config.fit_frames, "fitting phase 1 gmm")
         for batch in batches:
             if batch is None or reservoir.filled >= self.config.fit_frames:
                 break
             waveform = batch["waveform"].squeeze(1).to(device)
             features = extractor.extract(waveform).reshape(-1, self.extractor.dim)
             reservoir.add(features.cpu())
+            bar.n = min(reservoir.filled, self.config.fit_frames)
+            bar.refresh()
+        bar.close()
         return reservoir.collected()
 
     def fit_from_loader(self, loader, device):
@@ -113,14 +131,18 @@ class OnlineGmmSeeder:
         reservoir = ReservoirSampler(self.config.fit_frames, dim, device=device)
         batches = dataloader.full_iter() if hasattr(dataloader, "full_iter") \
             else dataloader
+        bar = _frames_bar(self.config.fit_frames, "seeding phase 2 gmm")
         for batch in batches:
             if batch is None or reservoir.filled >= self.config.fit_frames:
                 break
             waveform = batch["waveform"].to(device)
             feats = ema_encoder.extract_layer(waveform, layer)
             reservoir.add(feats.reshape(-1, dim))
+            bar.n = min(reservoir.filled, self.config.fit_frames)
+            bar.refresh()
             if reservoir.filled >= self.config.fit_frames:
                 break
+        bar.close()
         return reservoir.collected()
 
     def seed(self, ema_encoder, dataloader, layer, device, dim,

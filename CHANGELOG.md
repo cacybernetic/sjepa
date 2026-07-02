@@ -69,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- GMM fitting no longer gets OOM-killed on large `gmm.fit_frames` / K. The EM
+  step used to materialize an (N, K, D) tensor (tens of GB for the Phase 2
+  K=500 encoder-feature GMM); it now accumulates the (K, D) sufficient
+  statistics over row chunks using the closed-form `E[x^2] - E[x]^2` variance,
+  and the k-means assignment is chunked over rows as well.
 - Phase 1 -> Phase 2 GMM seeding no longer crashes with "need at least K frames
   to fit a K-component GMM". The seeder iterated the resumable training loader,
   which at the transition is parked at the end of the previous epoch and yielded
