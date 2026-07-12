@@ -59,7 +59,8 @@ class Hdf5Builder:
         if not self.progress:
             return enumerate(samples)
         from tqdm import tqdm
-        return enumerate(tqdm(samples, desc="building hdf5", leave=True))
+        return enumerate(tqdm(samples, desc="building hdf5", leave=True,
+                              dynamic_ncols=True))
 
     def _write_clip(self, group, name, waveform):
         """Write one waveform as a compressed float32 dataset."""

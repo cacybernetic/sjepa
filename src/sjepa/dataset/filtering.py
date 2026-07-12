@@ -82,7 +82,8 @@ class DatasetCleaner:
         if not self.progress:
             return refs
         from tqdm import tqdm
-        return tqdm(refs, desc="validating dataset", leave=True)
+        return tqdm(refs, desc="validating dataset", leave=True,
+                    dynamic_ncols=True)
 
     def scan(self, dataset_path):
         """Scan a dataset path and return the list of kept samples."""

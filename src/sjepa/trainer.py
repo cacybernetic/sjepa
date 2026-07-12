@@ -418,6 +418,13 @@ class Trainer:
         "val") resumes inside the same epoch; a "test" checkpoint resumes the
         final evaluation after the epoch loop. In every mid-pass case the loader
         positions and the running meters are restored before the pass continues.
+
+        A completed run is anchored at its last epoch (a "done" checkpoint, or a
+        "test" checkpoint written by in-epoch checkpointing during the final
+        evaluation). If the epoch budget has since been raised, both cases must
+        resume *training* the added epochs rather than jumping straight to the
+        final evaluation, so raising `train.epochs` continues an already-finished
+        run instead of reporting it done.
         """
         epoch = state["epoch"]
         stage = state.get("cursor", {}).get("stage", "done")
@@ -425,8 +432,14 @@ class Trainer:
             self.start_epoch = epoch + 1
             self._resume = None
         elif stage == "test":
-            self.start_epoch = self.cfg.train.epochs
-            self._resume = state
+            if epoch + 1 < self.cfg.train.epochs:
+                # The epoch budget was raised after the run finished: train the
+                # added epochs instead of only re-running the final evaluation.
+                self.start_epoch = epoch + 1
+                self._resume = None
+            else:
+                self.start_epoch = self.cfg.train.epochs
+                self._resume = state
         else:  # "train" or "val": resume inside this epoch
             self.start_epoch = epoch
             self._resume = state

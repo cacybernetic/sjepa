@@ -106,6 +106,44 @@ def test_in_epoch_checkpoint_and_resume(tmp_path, monkeypatch):
     assert (run_dir / "weights" / "last.pt").exists()
 
 
+def test_raising_epochs_after_done_resumes_training(tmp_path, monkeypatch):
+    """A finished run continues for the added epochs when `epochs` is raised.
+
+    With in-epoch checkpointing on, a completed run's newest checkpoint is a
+    "test" one written during the final evaluation. Raising `train.epochs` and
+    resuming must train the added epochs (not report the run done), so the
+    history ends with one row per epoch across the whole extended budget.
+    """
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _sine_zip(str(data_dir / "train.zip"), 12)
+    _sine_zip(str(data_dir / "test.zip"), 4, base=300)
+    config = _tiny_config(str(data_dir))
+    config["train"]["epochs"] = 2
+    config["train"]["grad_accum"] = 1
+    config["checkpoint"] = {"max_checkpoint": 50, "resume": False, "ckpt_step": 1}
+    config_path = tmp_path / "train.yaml"
+    config_path.write_text(yaml.safe_dump(config))
+    monkeypatch.chdir(tmp_path)
+
+    train_entry.run(str(config_path))
+    run_dir = tmp_path / "runs" / "pytest" / "train"
+    assert _read_history_epochs(run_dir / "history.csv") == [0, 1]
+
+    # The completed run left a "test" checkpoint as the newest on disk.
+    latest = torch.load(
+        sorted((run_dir / "checkpoints").glob("ckpt_*.pth"))[-1],
+        map_location="cpu", weights_only=False)
+    assert latest["cursor"]["stage"] == "test"
+
+    # Raise the epoch budget and resume: the added epochs must be trained.
+    config["train"]["epochs"] = 4
+    config["checkpoint"]["resume"] = True
+    config_path.write_text(yaml.safe_dump(config))
+    train_entry.run(str(config_path))
+    assert _read_history_epochs(run_dir / "history.csv") == [0, 1, 2, 3]
+
+
 class _Boom(Exception):
     """Marker exception used to simulate a crash mid-epoch."""
 

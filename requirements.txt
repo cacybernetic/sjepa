@@ -15,4 +15,3 @@ torchinfo==1.8.0
 tqdm==4.68.3
 loguru==0.7.3
 pytest==9.1.1
-
