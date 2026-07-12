@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- Overlapping-window dataset loading: every clip is tiled into windows of
+  `max_seconds` with a stride of `max_seconds * (1 - window_overlap)`, so all
+  frames of a recording are used instead of a single crop per file. Each window
+  is one training sample; clips shorter than the window stay a single padded
+  window. New configuration key `dataset.window_overlap` (default `0.5`) sets the
+  overlap/stride. Applies to both the on-the-fly reader (`AudioDataset`, via a
+  seek-based `AudioLoader.load_window`) and the HDF5 reader; the HDF5 builder now
+  stores each full clip and the reader windows it at read time (no on-disk
+  duplication). New helper module `src/sjepa/dataset/windowing.py`.
+
 - S-JEPA model implementation: the encoder `f_phi`, the predictor `h_psi`, and
   the cluster head `g_omega`.
 - Diagonal-covariance GMM with a k-means + EM fitter and an online GMM, plus
@@ -57,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every epoch metric is now logged and stored under an explicit
+  `<stage>_avg_<metric>` name (e.g. `train_avg_loss`, `val_avg_kl`,
+  `test_avg_top1`), making clear each value is the mean of the values
+  accumulated over the epoch. This renames the `history.csv` columns
+  (`train_<metric>`/`val_<metric>` -> `train_avg_<metric>`/`val_avg_<metric>`)
+  and the eval `results.csv` rows (`<metric>` -> `test_avg_<metric>`); the plot
+  file names keep the metric base (`history_kl.jpg`, ...).
+- The periodic training step line (`_log_step`) is logged at INFO instead of
+  DEBUG so it shows on the default level.
 - Validation averages the full objective loss (same definition as training) so
   the loss plot overlays comparable curves.
 - Phase 2 online GMM is updated from every micro-batch of a gradient-accumulation

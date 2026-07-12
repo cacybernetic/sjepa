@@ -195,7 +195,7 @@ class Trainer:
         if opt_step % self.cfg.train.log_every != 0:
             return
         comp = result["components"]
-        _LOGGER.debug(
+        _LOGGER.info(
             "epoch {}/{} | step {}/{} loss={:.4f} kl_masked={:.4f} "
             "kl_visible={:.4f} grad_norm={:.3f}", epoch, self.cfg.train.epochs,
             opt_step, total, float(result["loss"].detach()),
@@ -469,20 +469,29 @@ class Trainer:
     # ----- the epoch loop -----
 
     def _log_epoch_metrics(self, epoch, train_metrics, val_metrics):
-        """Log every metric of the epoch at INFO level after validation."""
+        """Log every metric of the epoch at INFO level after validation.
+
+        Each value is the mean of the values accumulated over the whole epoch,
+        so the name carries an explicit `avg` (e.g. `train_avg_loss`,
+        `val_avg_kl`).
+        """
         _LOGGER.info(banner(f"Epoch {epoch}/{self.cfg.train.epochs} metrics"))
         for name, value in train_metrics.items():
-            _LOGGER.info("  train {:<14} = {:.4f}", name, value)
+            _LOGGER.info("  {:<22} = {:.4f}", f"train_avg_{name}", value)
         for name, value in val_metrics.items():
-            _LOGGER.info("  val   {:<14} = {:.4f}", name, value)
+            _LOGGER.info("  {:<22} = {:.4f}", f"val_avg_{name}", value)
 
     def _record_epoch(self, epoch, train_metrics, val_metrics):
-        """Append the history row and redraw the plots."""
+        """Append the history row and redraw the plots.
+
+        Columns follow the `<stage>_avg_<metric>` convention (the recorded value
+        is the epoch mean of that metric).
+        """
         row = {"epoch": epoch, "lr": self.optimizer.param_groups[0]["lr"]}
         for name, value in train_metrics.items():
-            row[f"train_{name}"] = value
+            row[f"train_avg_{name}"] = value
         for name, value in val_metrics.items():
-            row[f"val_{name}"] = value
+            row[f"val_avg_{name}"] = value
         self.history.add(row)
         self.plotter.plot(self.history.history())
         return row
@@ -563,5 +572,5 @@ class Trainer:
         values = self._validate(self.loaders["test"], "test", last_epoch,
                                 resume=resume)
         for name, value in values.items():
-            _LOGGER.info("  test {:<14} = {:.4f}", name, value)
+            _LOGGER.info("  {:<22} = {:.4f}", f"test_avg_{name}", value)
         return values

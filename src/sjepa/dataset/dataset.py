@@ -1,8 +1,10 @@
 """PyTorch dataset and collate function for raw audio clips.
 
-The dataset reads one clean sample at a time and returns its mono waveform. The
-archive handles are opened lazily inside each worker, so the dataset is safe to
-use with several DataLoader workers.
+The dataset tiles every clean sample into overlapping windows and returns one
+window at a time as a mono waveform, so all of a long recording is used (not a
+single crop per file). The overlap is set by `window_overlap`; the window length
+is `max_seconds`. The archive handles are opened lazily inside each worker, so
+the dataset is safe to use with several DataLoader workers.
 
 The collate function pads a batch of waveforms to a shared length that is a
 multiple of the frame hop. It also returns the real frame length of each clip,
@@ -17,24 +19,29 @@ from torch.utils.data import Dataset
 
 from .audio import AudioLoader
 from .readers import ArchiveReader
+from .windowing import hop_from_overlap, plan_windows
 
 
 class AudioDataset(Dataset):
-    """Return mono waveforms for a list of clean samples."""
+    """Serve overlapping windows tiled across a list of clean samples."""
 
     def __init__(self, samples, sample_rate=16000, max_seconds=15.0,
-                 random_crop=True):
+                 window_overlap=0.5):
         if not samples:
             raise ValueError("the sample list is empty")
         self.samples = samples
+        self.window_seconds = max_seconds
         self.loader = AudioLoader(sample_rate=sample_rate,
                                   max_seconds=max_seconds,
-                                  random_crop=random_crop)
+                                  random_crop=False)
+        hop = hop_from_overlap(max_seconds, window_overlap)
+        self.windows = plan_windows([s.seconds for s in samples],
+                                    max_seconds, hop)
         self._reader = None
 
     def __len__(self):
-        """Return the number of samples in the dataset."""
-        return len(self.samples)
+        """Return the number of windows in the dataset."""
+        return len(self.windows)
 
     def _reader_handle(self):
         """Return a worker-local archive reader, building it on first use."""
@@ -43,16 +50,18 @@ class AudioDataset(Dataset):
         return self._reader
 
     def __getitem__(self, index):
-        """Return (waveform, index) for one sample, or None when it fails."""
-        ref = self.samples[index].ref
+        """Return (waveform, sample_index) for one window, or None on failure."""
+        sample_index, start = self.windows[index]
+        ref = self.samples[sample_index].ref
         try:
             stream = self._reader_handle().read_stream(ref)
-            waveform = self.loader.load_stream(stream)
+            waveform = self.loader.load_window(stream, start,
+                                               self.window_seconds)
         except (OSError, RuntimeError, ValueError):
             return None
         if waveform.numel() == 0:
             return None
-        return waveform, index
+        return waveform, sample_index
 
 
 def _round_up(value, multiple):

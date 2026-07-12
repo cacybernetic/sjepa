@@ -40,7 +40,12 @@ class DataModule:
         self.collator = WaveformCollator(hop=hop)
         self._val_indices = None
 
-    def _raw_dataset(self, path, max_samples, random_crop):
+    def _hdf5_dataset(self, path):
+        """Open an HDF5 dataset with the configured windowing."""
+        return Hdf5AudioDataset(path, max_seconds=self.data_cfg.max_seconds,
+                                window_overlap=self.data_cfg.window_overlap)
+
+    def _raw_dataset(self, path, max_samples):
         """Build an on-the-fly audio dataset from a folder or archive."""
         samples = load_or_build_cache(
             path, sample_rate=self.data_cfg.sample_rate,
@@ -48,21 +53,21 @@ class DataModule:
         samples = _cap(samples, max_samples)
         return AudioDataset(samples, sample_rate=self.data_cfg.sample_rate,
                             max_seconds=self.data_cfg.max_seconds,
-                            random_crop=random_crop)
+                            window_overlap=self.data_cfg.window_overlap)
 
     def _train_dataset(self):
         """Build the training dataset (raw or HDF5)."""
         if self.data_cfg.use_hdf5:
-            return Hdf5AudioDataset(self.data_cfg.train_h5)
+            return self._hdf5_dataset(self.data_cfg.train_h5)
         return self._raw_dataset(self.data_cfg.train_path,
-                                 self.data_cfg.max_train_samples, True)
+                                 self.data_cfg.max_train_samples)
 
     def _test_dataset(self):
         """Build the test dataset (raw or HDF5)."""
         if self.data_cfg.use_hdf5:
-            return Hdf5AudioDataset(self.data_cfg.test_h5)
+            return self._hdf5_dataset(self.data_cfg.test_h5)
         return self._raw_dataset(self.data_cfg.test_path,
-                                 self.data_cfg.max_test_samples, False)
+                                 self.data_cfg.max_test_samples)
 
     def _val_subset(self, test_dataset):
         """Pick a `val_prob` fraction of the test dataset for validation."""

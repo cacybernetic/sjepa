@@ -22,6 +22,7 @@ import torch
 from ..logging import get_logger
 from .audio import AudioLoader
 from .readers import ArchiveReader
+from .windowing import hop_from_overlap, plan_windows
 
 _LOGGER = get_logger()
 
@@ -32,8 +33,10 @@ class Hdf5Builder:
     def __init__(self, sample_rate=16000, max_seconds=15.0, augmentor=None,
                  progress=True):
         self.sample_rate = sample_rate
+        # Store the whole clip (max_seconds=None): the reader tiles it into
+        # overlapping windows, so cropping here would throw away most frames.
         self.loader = AudioLoader(sample_rate=sample_rate,
-                                  max_seconds=max_seconds, random_crop=False)
+                                  max_seconds=None, random_crop=False)
         self.augmentor = augmentor
         self.progress = progress
 
@@ -92,19 +95,26 @@ class Hdf5Builder:
 
 
 class Hdf5AudioDataset(torch.utils.data.Dataset):
-    """Read decoded waveforms back from an HDF5 file."""
+    """Serve overlapping windows tiled across the clips of an HDF5 file."""
 
-    def __init__(self, path):
+    def __init__(self, path, max_seconds=15.0, window_overlap=0.5):
         self.path = path
         self._handle = None
         with h5py.File(path, "r") as handle:
             self.count = int(handle.attrs["count"])
-        if self.count <= 0:
-            raise ValueError(f"hdf5 file has no clips: {path}")
+            if self.count <= 0:
+                raise ValueError(f"hdf5 file has no clips: {path}")
+            sample_rate = int(handle.attrs["sample_rate"])
+            clips = handle["clips"]
+            # Read only each clip's length (its shape), not its samples.
+            lengths = [clips[str(i)].shape[0] for i in range(self.count)]
+        self.window_samples = int(sample_rate * max_seconds)
+        hop = int(sample_rate * hop_from_overlap(max_seconds, window_overlap))
+        self.windows = plan_windows(lengths, self.window_samples, max(hop, 1))
 
     def __len__(self):
-        """Return the number of clips in the file."""
-        return self.count
+        """Return the number of windows in the file."""
+        return len(self.windows)
 
     def _file(self):
         """Open the HDF5 file lazily, one handle per worker."""
@@ -113,7 +123,9 @@ class Hdf5AudioDataset(torch.utils.data.Dataset):
         return self._handle
 
     def __getitem__(self, index):
-        """Return (waveform, index) for one clip."""
-        clips = self._file()["clips"]
-        array = clips[str(index)][:]
-        return torch.from_numpy(array).float(), index
+        """Return (waveform, clip_index) for one window."""
+        clip_index, start = self.windows[index]
+        start = int(start)
+        clip = self._file()["clips"][str(clip_index)]
+        array = clip[start:start + self.window_samples]
+        return torch.from_numpy(array).float(), clip_index

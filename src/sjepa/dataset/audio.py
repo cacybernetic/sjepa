@@ -26,7 +26,9 @@ class AudioLoader:
         if sample_rate <= 0:
             raise ValueError("sample_rate must be > 0")
         self.sample_rate = sample_rate
-        self.max_samples = int(sample_rate * max_seconds)
+        # None keeps the whole clip (used when we window it ourselves later).
+        self.max_samples = (int(sample_rate * max_seconds)
+                            if max_seconds else None)
         self.random_crop = random_crop
 
     @staticmethod
@@ -51,6 +53,8 @@ class AudioLoader:
 
     def _crop(self, waveform):
         """Cut a long clip down to the maximum number of samples."""
+        if self.max_samples is None:
+            return waveform
         length = waveform.shape[-1]
         if length <= self.max_samples:
             return waveform
@@ -68,6 +72,27 @@ class AudioLoader:
         waveform = self._to_mono(waveform)
         waveform = self._resample(waveform, source_rate)
         waveform = self._crop(waveform)
+        return waveform.squeeze(0).float()
+
+    def load_window(self, stream, start_seconds, window_seconds):
+        """Decode a single window `[start, start + window_seconds)` of a clip.
+
+        Only that slice is read from the stream (a seek, not a full decode), so
+        tiling a long recording into many windows stays cheap. The window is
+        mixed to mono and resampled to the target rate.
+
+        Returns:
+            A 1D float32 tensor of samples.
+        """
+        with sf.SoundFile(stream) as handle:
+            source_rate = handle.samplerate
+            start = max(0, int(round(start_seconds * source_rate)))
+            frames = int(round(window_seconds * source_rate))
+            handle.seek(start)
+            data = handle.read(frames, dtype="float32", always_2d=True)
+        waveform = torch.from_numpy(data).t().contiguous()
+        waveform = self._to_mono(waveform)
+        waveform = self._resample(waveform, source_rate)
         return waveform.squeeze(0).float()
 
     def probe_stream(self, stream):

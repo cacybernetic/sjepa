@@ -9,6 +9,7 @@ augmentations, and serves them as batches. Every file holds one job:
   * `features`: build 39-dim MFCC features for the Phase 1 GMM.
   * `filtering`: drop bad files and cache the good ones.
   * `augment`: add noise and overlay other clips.
+  * `windowing`: tile each clip into overlapping windows.
   * `dataset`: a PyTorch dataset plus a collate function.
   * `hdf5`: build and read a ready-to-train HDF5 dataset.
 """
@@ -25,6 +26,7 @@ from .filtering import (
     load_or_build_cache,
 )
 from .augment import DenoiseAugmentor, mix_at_snr, mix_utterance
+from .windowing import hop_from_overlap, plan_windows, window_starts
 from .dataset import AudioDataset, WaveformCollator
 from .hdf5 import Hdf5Builder, Hdf5AudioDataset
 
@@ -44,6 +46,9 @@ __all__ = [
     "DenoiseAugmentor",
     "mix_at_snr",
     "mix_utterance",
+    "hop_from_overlap",
+    "plan_windows",
+    "window_starts",
     "AudioDataset",
     "WaveformCollator",
     "Hdf5Builder",

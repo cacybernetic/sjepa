@@ -18,8 +18,11 @@ from sjepa.dataset import (
     WaveformCollator,
     cache_path_for,
     discover_audio,
+    hop_from_overlap,
     is_audio_name,
     load_or_build_cache,
+    plan_windows,
+    window_starts,
 )
 
 
@@ -134,6 +137,20 @@ def test_hdf5_build_and_read(tmp_path):
     assert waveform.dim() == 1 and index == 0
 
 
+def test_hdf5_windows_long_clip(tmp_path):
+    """The HDF5 reader tiles a stored full clip into overlapping windows."""
+    sf.write(str(tmp_path / "long.wav"), _sine(220, seconds=3.0), 16000)
+    samples = load_or_build_cache(str(tmp_path), progress=False)
+    out_path = str(tmp_path / "train.h5")
+    Hdf5Builder(progress=False).build(samples, out_path)
+    dataset = Hdf5AudioDataset(out_path, max_seconds=1.0, window_overlap=0.5)
+    # Same tiling as the raw path: 3s clip, 1s window, 0.5s hop -> 5 windows.
+    assert len(dataset) == 5
+    waveform, clip_index = dataset[0]
+    assert clip_index == 0
+    assert waveform.shape[0] == 16000
+
+
 def test_audio_dataset_returns_waveform(tmp_path):
     """The dataset returns a waveform and its index for a valid sample."""
     _make_folder(str(tmp_path), count=2)
@@ -142,3 +159,53 @@ def test_audio_dataset_returns_waveform(tmp_path):
     item = dataset[0]
     assert item is not None
     assert item[0].dim() == 1
+
+
+def test_window_starts_cover_all_frames():
+    """Windows tile a clip end to end, snapping the last one to the tail."""
+    starts = window_starts(length=3.0, window=1.0, hop=0.5)
+    assert starts[0] == 0.0
+    # The last window ends exactly at the clip end (start = length - window).
+    assert starts[-1] == 2.0
+    # Consecutive starts never leave an uncovered gap wider than the window.
+    assert all(b - a <= 1.0 + 1e-9 for a, b in zip(starts, starts[1:]))
+
+
+def test_window_starts_short_clip_single_window():
+    """A clip shorter than one window yields exactly one window at 0."""
+    assert window_starts(length=0.5, window=1.0, hop=0.5) == [0.0]
+
+
+def test_hop_from_overlap():
+    """The hop shrinks with more overlap and is capped below the window."""
+    assert hop_from_overlap(10.0, 0.5) == 5.0
+    assert hop_from_overlap(10.0, 0.0) == 10.0
+    assert hop_from_overlap(10.0, 1.0) > 0.0  # capped so it never reaches 0
+
+
+def test_plan_windows_flattens_clips():
+    """The plan holds one (clip, start) entry per window across all clips."""
+    plan = plan_windows([3.0, 0.5], window=1.0, hop=1.0)
+    # Clip 0 (3s): starts 0, 1, 2 -> 3 windows; clip 1 (0.5s): 1 window.
+    assert [c for c, _ in plan] == [0, 0, 0, 1]
+
+
+def test_audio_dataset_tiles_long_clip(tmp_path):
+    """A long clip becomes several overlapping windows, not a single crop."""
+    sf.write(str(tmp_path / "long.wav"), _sine(220, seconds=3.0), 16000)
+    samples = load_or_build_cache(str(tmp_path), progress=False)
+    dataset = AudioDataset(samples, max_seconds=1.0, window_overlap=0.5)
+    # 3s clip, 1s window, 0.5s hop -> starts 0, .5, 1, 1.5, 2 -> 5 windows.
+    assert len(dataset) == 5
+    waveform, sample_index = dataset[0]
+    assert sample_index == 0
+    assert waveform.shape[0] == 16000  # one full second
+
+
+def test_audio_dataset_stride_is_configurable(tmp_path):
+    """A larger stride (less overlap) yields fewer windows for the same clip."""
+    sf.write(str(tmp_path / "long.wav"), _sine(220, seconds=3.0), 16000)
+    samples = load_or_build_cache(str(tmp_path), progress=False)
+    dense = AudioDataset(samples, max_seconds=1.0, window_overlap=0.5)
+    sparse = AudioDataset(samples, max_seconds=1.0, window_overlap=0.0)
+    assert len(sparse) < len(dense)

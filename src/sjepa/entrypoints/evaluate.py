@@ -27,7 +27,7 @@ def _write_results(layout, values):
         writer = csv.writer(handle)
         writer.writerow(["metric", "value"])
         for name, value in values.items():
-            writer.writerow([name, value])
+            writer.writerow([f"test_avg_{name}", value])
     _LOGGER.info("Wrote results to {}", path)
 
 

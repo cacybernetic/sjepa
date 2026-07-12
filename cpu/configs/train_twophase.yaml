@@ -26,6 +26,7 @@ dataset:
   val_prob: 0.5
   sample_rate: 16000
   max_seconds: 15.0
+  window_overlap: 0.5    # overlap between windows tiled over each clip (0..1)
   num_workers: 2
   augment:
     enabled: true

@@ -35,14 +35,18 @@ class HistoryPlotter:
 
     @staticmethod
     def _metric_keys(history):
-        """Return the metric base names that have train or val series."""
+        """Return the metric base names that have train or val series.
+
+        Columns follow the `<stage>_avg_<metric>` convention, so `train_avg_kl`
+        yields the base name `kl` (used for the figure title and file name).
+        """
         keys = set()
         for row in history:
             for name in row:
-                if name.startswith("train_"):
-                    keys.add(name[len("train_"):])
-                elif name.startswith("val_"):
-                    keys.add(name[len("val_"):])
+                if name.startswith("train_avg_"):
+                    keys.add(name[len("train_avg_"):])
+                elif name.startswith("val_avg_"):
+                    keys.add(name[len("val_avg_"):])
         return sorted(keys)
 
     @staticmethod
@@ -65,8 +69,8 @@ class HistoryPlotter:
     def _plot_one(self, history, metric):
         """Draw and save the train vs val figure for one metric."""
         figure, axis = plt.subplots(figsize=(8, 5))
-        train_x, train_y = self._series(history, "train", metric)
-        val_x, val_y = self._series(history, "val", metric)
+        train_x, train_y = self._series(history, "train_avg", metric)
+        val_x, val_y = self._series(history, "val_avg", metric)
         if train_x:
             axis.plot(train_x, train_y, label="train", color=_TRAIN_COLOR)
         if val_x:

@@ -57,6 +57,10 @@ class DatasetConfig:
     val_prob: float = 0.5
     sample_rate: int = 16000
     max_seconds: float = 15.0
+    # Fraction of overlap between consecutive windows tiled across each clip
+    # (window length = max_seconds; hop = max_seconds * (1 - window_overlap)).
+    # 0.5 = 50% overlap, 0.0 = back-to-back windows, capped below 1.0.
+    window_overlap: float = 0.5
     num_workers: int = 4
     augment: AugmentConfig = field(default_factory=AugmentConfig)
 

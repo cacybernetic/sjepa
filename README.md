@@ -316,6 +316,18 @@ data/
   test.cache.json
 ```
 
+Every clip is tiled into **overlapping windows** of `max_seconds` instead of
+being cropped to a single window per file: a window of length `max_seconds`
+slides across the whole recording with a stride of
+`max_seconds * (1 - window_overlap)`, so **all frames are used** and neighbouring
+windows overlap. Each window is one training sample. `window_overlap` (default
+`0.5`, i.e. 50%) is set in the config — use `0.0` for back-to-back windows with
+no overlap. Clips shorter than `max_seconds` stay a single (padded) window. This
+applies to both the on-the-fly reader and the HDF5 reader (the HDF5 builder
+stores each full clip and the reader windows it at read time, so there is no
+duplication on disk). `max_train_samples` / `max_test_samples` still cap the
+number of source **files**, which are then expanded into windows.
+
 The validation set is a fraction (`val_prob`, default `0.5`) of the **test** set.
 The final evaluation runs on the whole test set.
 
@@ -478,7 +490,7 @@ Phase 1, encoder GMM with `K = 500` in Phase 2), so the KL is **not directly
 comparable across the transition** — judge each phase by its own trend. A
 healthy run looks like this:
 
-| Stage | `val_kl` | `val_top1` | `val_entropy_bits` |
+| Stage | `val_avg_kl` | `val_avg_top1` | `val_avg_entropy_bits` |
 |-------|----------|------------|--------------------|
 | Phase 1 | falls, then **plateaus** | low, flat | mid |
 | Transition epoch | **spikes up** (new head + new `K`) | jumps | `≈ log2(K)` (uniform) |
@@ -505,8 +517,12 @@ What to watch for:
   last epoch, the run stopped early. Schedule the transition once Phase 1
   flattens and leave Phase 2 the larger share of epochs.
 
-The metrics are logged each epoch and written to `history.csv` with matching
-plots under `<run>/plotes/` (`history_kl.jpg`, `history_top1.jpg`,
+Each metric is the **mean of the values accumulated over the epoch**, logged and
+stored under the `<stage>_avg_<metric>` convention: `train_avg_*` (training),
+`val_avg_*` (validation), and `test_avg_*` (the final evaluation's
+`results.csv`). The values are logged each epoch and written to `history.csv`
+(columns `train_avg_kl`, `val_avg_kl`, ...) with matching plots under
+`<run>/plotes/` (`history_kl.jpg`, `history_top1.jpg`,
 `history_entropy_bits.jpg`, ...).
 
 ---
