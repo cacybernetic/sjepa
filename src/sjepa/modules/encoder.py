@@ -142,3 +142,13 @@ class SpeechEncoder(nn.Module):
                 f"layer_index {layer_index} is out of range "
                 f"for {len(outputs)} layers")
         return outputs[layer_index]
+
+    @torch.no_grad()
+    def extract_all_layers(self, waveform, padding_mask=None):
+        """Return the clean features of every layer from one forward pass.
+
+        The layer selector needs all layers at once; calling `extract_layer`
+        per layer would run the full stack L times (O(L^2) layer computes).
+        """
+        return self.forward(waveform, mask=None, padding_mask=padding_mask,
+                            return_layers=True)

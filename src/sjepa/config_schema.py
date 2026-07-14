@@ -55,6 +55,9 @@ class DatasetConfig:
     max_train_samples: object = None
     max_test_samples: object = None
     val_prob: float = 0.5
+    # Keep the final test evaluation disjoint from the validation subset, so
+    # the clips used to pick the best checkpoint never inflate the test score.
+    val_disjoint: bool = True
     sample_rate: int = 16000
     max_seconds: float = 15.0
     # Fraction of overlap between consecutive windows tiled across each clip
@@ -112,6 +115,10 @@ class TrainLoopConfig:
     log_every: int = 16
     phase: int = 1
     use_visible_loss: bool = True
+    # "fp32" or "bf16": bf16 runs the model forward under torch.autocast on
+    # CUDA (the loss and the GMM targets stay in float32). No GradScaler is
+    # needed for bf16.
+    precision: str = "fp32"
     # Epoch at which a Phase 1 run switches to Phase 2 in the same trajectory
     # (K -> num_clusters_phase2, EMA encoder + online GMM). -1 disables it.
     phase2_start_epoch: int = -1
@@ -148,6 +155,11 @@ class SchedulerConfig:
     # Warm-restart the learning rate at the Phase 1 -> Phase 2 transition so
     # Phase 2 does not train on the decayed tail of the whole-run cosine.
     rewarm_on_phase2: bool = True
+    # Scale of the restarted Phase 2 window relative to the base rate. The
+    # paper trains Phase 2 at 2.5e-5 against 1e-4 in Phase 1 (ratio 0.25);
+    # restarting at the full base rate destabilizes the self-referential
+    # Phase 2 targets.
+    phase2_lr_ratio: float = 0.25
 
     @classmethod
     def from_dict(cls, data):

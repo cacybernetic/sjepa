@@ -83,6 +83,11 @@ class PhaseScheduler:
         trainer.targets = targets
         trainer.phase2 = phase2
         trainer.current_phase = 2
+        # KL values against K=500 moving online-GMM targets are not comparable
+        # with the Phase 1 K=100 frozen-GMM values: without a reset, best.pt
+        # would stay frozen on a Phase 1 checkpoint forever.
+        trainer.best.best = None
+        _LOGGER.info("Best-metric tracker reset for Phase 2")
 
     def _to_masked_only(self, trainer):
         """Drop the visible-frame loss and turn denoising augmentation off."""

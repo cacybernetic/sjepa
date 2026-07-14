@@ -15,11 +15,15 @@ The class delegates the small jobs to helpers so every method stays short:
 
 from __future__ import annotations
 
+import math
+import random
+
 import torch
 
 from .logging import banner, colorize, get_logger
 from .metrics import MetricGroup, effective_rank
 from .metrics.base import AverageMeter
+from .modules.masking import build_padding_mask
 from .progress import EpochProgress, StepProgress
 
 _LOGGER = get_logger()
@@ -71,17 +75,35 @@ class LayerSelector:
         self.scores = [None] * num_layers
 
     @torch.no_grad()
-    def _layer_rank(self, ema_encoder, waveform, layer):
-        """Return the effective rank of one EMA encoder layer."""
-        feats = ema_encoder.extract_layer(waveform, layer)
-        return effective_rank(feats)
+    def _layer_features(self, ema_encoder, waveform, padding_mask):
+        """Return the per-layer feature list from a single forward pass.
+
+        One `extract_all_layers` call gives every layer output at once; the
+        older per-layer `extract_layer` fallback would run the full stack once
+        per layer (O(L^2) forwards).
+        """
+        if hasattr(ema_encoder, "extract_all_layers"):
+            return ema_encoder.extract_all_layers(waveform,
+                                                  padding_mask=padding_mask)
+        return [ema_encoder.extract_layer(waveform, layer,
+                                          padding_mask=padding_mask)
+                for layer in range(self.num_layers)]
 
     @torch.no_grad()
-    def select(self, ema_encoder, waveform):
-        """Update the smoothed scores and return the best layer index."""
+    def select(self, ema_encoder, waveform, padding_mask=None):
+        """Update the smoothed scores and return the best layer index.
+
+        Padded frames are excluded from the rank measurement: they are zeros
+        that would deflate the spectrum of every layer equally and add noise.
+        """
+        features = self._layer_features(ema_encoder, waveform, padding_mask)
         best_layer, best_score = 0, -1.0
         for layer in range(self.num_layers):
-            rank = self._layer_rank(ema_encoder, waveform, layer)
+            feats = features[layer]
+            if padding_mask is not None:
+                keep = padding_mask[:, :feats.shape[1]]
+                feats = feats[keep]
+            rank = effective_rank(feats)
             if self.scores[layer] is None:
                 self.scores[layer] = rank
             else:
@@ -100,6 +122,69 @@ class LayerSelector:
         scores = state.get("scores")
         if scores is not None and len(scores) == self.num_layers:
             self.scores = list(scores)
+
+
+class _EvalRngScope:
+    """Make an evaluation pass deterministic without disturbing training.
+
+    Validation applies random block masks; without a fixed seed the val
+    metrics carry sampling noise straight into the best-model selection.
+    On entry the torch RNG states are saved and reseeded from (seed, epoch,
+    stage); on exit the training RNG streams are restored untouched. A resumed
+    mid-pass evaluation (`fresh=False`) keeps the RNG restored from the
+    checkpoint instead of reseeding.
+    """
+
+    def __init__(self, seed, epoch, stage, fresh=True):
+        self.seed = seed
+        self.epoch = epoch
+        self.stage = stage
+        self.fresh = fresh
+        self._cpu_state = None
+        self._cuda_states = None
+
+    def __enter__(self):
+        self._cpu_state = torch.get_rng_state()
+        if torch.cuda.is_available():
+            self._cuda_states = torch.cuda.get_rng_state_all()
+        if self.fresh:
+            offset = 0 if self.stage == "val" else 1
+            torch.manual_seed(self.seed * 100003 + self.epoch * 2 + offset)
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        torch.set_rng_state(self._cpu_state)
+        if self._cuda_states is not None:
+            torch.cuda.set_rng_state_all(self._cuda_states)
+        return False
+
+
+def capture_rng_state():
+    """Snapshot every RNG stream that influences training."""
+    state = {
+        "torch": torch.get_rng_state(),
+        "python": random.getstate(),
+    }
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def restore_rng_state(state):
+    """Restore the RNG streams captured by `capture_rng_state`."""
+    if not state:
+        return
+    if "torch" in state:
+        torch.set_rng_state(state["torch"])
+    if "python" in state:
+        python_state = state["python"]
+        # torch.save may round-trip the inner tuple as a list.
+        random.setstate((python_state[0], tuple(python_state[1]),
+                         python_state[2]))
+    if "cuda" in state and torch.cuda.is_available():
+        saved = state["cuda"]
+        if len(saved) == torch.cuda.device_count():
+            torch.cuda.set_rng_state_all(saved)
 
 
 class Trainer:
@@ -171,14 +256,19 @@ class Trainer:
         self.phase2["ema"].update(self.model.encoder, self.global_step)
         self.targets.post_step()
 
-    def _maybe_select_layer(self, waveform):
+    def _maybe_select_layer(self, batch):
         """Run adaptive layer selection on the configured cadence."""
         if self.phase2 is None or self.phase2.get("selector") is None:
             return
         cadence = self.cfg.gmm.layer_check_every
         if cadence <= 0 or self.global_step % cadence != 0:
             return
-        best = self.phase2["selector"].select(self.phase2["ema"], waveform)
+        waveform = batch["waveform"].to(self.step.device, non_blocking=True)
+        frames = waveform.shape[-1] // self.step.hop
+        padding = build_padding_mask(waveform.shape[0], frames,
+                                     batch["frame_lengths"], waveform.device)
+        best = self.phase2["selector"].select(self.phase2["ema"], waveform,
+                                              padding_mask=padding)
         if best != self.targets.layer:
             _LOGGER.info("Auto layer switch {} -> {}", self.targets.layer, best)
             self.targets.set_layer(best)
@@ -199,7 +289,12 @@ class Trainer:
             "epoch {}/{} | step {}/{} loss={:.4f} kl_masked={:.4f} "
             "kl_visible={:.4f} grad_norm={:.3f}", epoch, self.cfg.train.epochs,
             opt_step, total, float(result["loss"].detach()),
-            comp["loss_masked"], comp["loss_visible"], grad_norm)
+            float(comp["loss_masked"]), float(comp["loss_visible"]), grad_norm)
+
+    @staticmethod
+    def _finite_waveform(batch):
+        """Return True when the batch waveform holds only finite values."""
+        return bool(torch.isfinite(batch["waveform"]).all())
 
     def _train_epoch(self, epoch, resume=None):
         """Train for one epoch and return the average train metrics.
@@ -228,29 +323,51 @@ class Trainer:
         total = max(1, len(loader) - loader.batches_done)
         bar = StepProgress(total, "train", epoch, self.cfg.train.epochs)
         augmentor = self._augmentor()
-        for index, batch in enumerate(loader):
+        # `micro` counts the *processed* micro-batches: a batch dropped by the
+        # collator (None) must not shrink an accumulation window, or its
+        # gradient would be scaled by 1/grad_accum with fewer contributions.
+        micro = 0
+        for batch in loader:
             if batch is None:
+                bar.update(None)
                 continue
-            opt_steps = self._train_batch(epoch, batch, augmentor, index,
+            micro += 1
+            opt_steps = self._train_batch(epoch, batch, augmentor, micro,
                                           loader, meters, bar, opt_steps)
         opt_steps = self._flush(epoch, len(loader), opt_steps)
         bar.close()
         return {"loss": meters["loss"].average(), **self.train_metrics.compute()}
 
-    def _train_batch(self, epoch, batch, augmentor, index, loader, meters, bar,
+    def _train_batch(self, epoch, batch, augmentor, micro, loader, meters, bar,
                      opt_steps):
         """Run one micro-batch and step the optimizer when accumulation is full."""
+        if not self._finite_waveform(batch):
+            _LOGGER.warning("Skipped a batch with non-finite waveform values")
+            bar.update(None)
+            return opt_steps
         result = self.step.run(batch, self.targets, augmentor, accumulate=True)
+        loss_value = float(result["loss"].detach())
+        if not math.isfinite(loss_value):
+            # One poisoned backward would corrupt every weight for good.
+            _LOGGER.warning("Skipped a batch with non-finite loss ({})",
+                            loss_value)
+            bar.update(None)
+            return opt_steps
         self._backward(result["loss"])
-        meters["loss"].update(float(result["loss"].detach()))
+        meters["loss"].update(loss_value)
         self.train_metrics.update(result["logits_masked"], result["targets"],
                                   result["selection"])
-        bar.update({"loss": meters["loss"].average(),
-                    "kl": self.train_metrics.compute()["kl"]})
-        if (index + 1) % self.cfg.train.grad_accum == 0:
+        # The postfix values force a device sync; refresh them at the logging
+        # cadence, not on every micro-batch.
+        if micro % max(1, self.cfg.train.log_every) == 0:
+            bar.update({"loss": meters["loss"].average(),
+                        "kl": self.train_metrics.compute()["kl"]})
+        else:
+            bar.update(None)
+        if micro % self.cfg.train.grad_accum == 0:
             grad_norm = self._optimizer_step()
             opt_steps += 1
-            self._maybe_select_layer(batch["waveform"].to(self.step.device))
+            self._maybe_select_layer(batch)
             total = max(1, len(loader) // self.cfg.train.grad_accum)
             self._log_step(epoch, opt_steps, total, grad_norm, result)
             self._maybe_checkpoint_train(epoch, meters["loss"], opt_steps)
@@ -292,17 +409,29 @@ class Trainer:
             self.metrics.load_state_dict(resume["meters"]["metrics"])
         total = max(1, len(loader) - loader.batches_done)
         bar = StepProgress(total, stage, epoch, self.cfg.train.epochs)
-        for batch in loader:
-            if batch is not None:
-                result = self.step.run(batch, self.targets, augmentor=None)
-                loss_meter.update(float(result["loss"].detach()))
-                self.metrics.update(result["logits_masked"], result["targets"],
-                                    result["selection"])
-                bar.update(self.metrics.compute())
-            # Checked on every batch (even a dropped None one) so the loader
-            # position is captured at the right cadence and never skipped.
-            self._maybe_checkpoint_eval(epoch, stage, loader, loss_meter,
-                                        extra_payload)
+        with _EvalRngScope(self.cfg.seed, epoch, stage, fresh=resume is None):
+            for index, batch in enumerate(loader):
+                if batch is not None and self._finite_waveform(batch):
+                    result = self.step.run(batch, self.targets, augmentor=None)
+                    loss_value = float(result["loss"].detach())
+                    if math.isfinite(loss_value):
+                        loss_meter.update(loss_value)
+                        self.metrics.update(result["logits_masked"],
+                                            result["targets"],
+                                            result["selection"])
+                    else:
+                        _LOGGER.warning("Skipped a {} batch with non-finite "
+                                        "loss", stage)
+                # Refreshing the metric postfix syncs the device; do it at the
+                # logging cadence only.
+                if (index + 1) % max(1, self.cfg.train.log_every) == 0:
+                    bar.update(self.metrics.compute())
+                else:
+                    bar.update(None)
+                # Checked on every batch (even a dropped None one) so the loader
+                # position is captured at the right cadence and never skipped.
+                self._maybe_checkpoint_eval(epoch, stage, loader, loss_meter,
+                                            extra_payload)
         bar.close()
         values = self.metrics.compute()
         values["loss"] = loss_meter.average()
@@ -340,6 +469,7 @@ class Trainer:
             "epoch_seconds": self.epoch_seconds,
             "cursor": {"stage": stage},
             "loaders": self._loader_states(),
+            "rng": capture_rng_state(),
         }
         if self.phase2 is not None:
             payload["ema"] = self.phase2["ema"].state_dict()
@@ -402,13 +532,30 @@ class Trainer:
                 self.phase_scheduler._masked_only_done = True
         self.model.load_state_dict(state["model"])
         self.optimizer.load_state_dict(state["optimizer"])
-        self.scheduler.load_state_dict(state["scheduler"])
+        self.scheduler.load_state_dict(self._scheduler_state(state["scheduler"]))
         self.global_step = state.get("global_step", 0)
         self._ckpt_seq = state.get("ckpt_seq", 0)
         self.best.best = state.get("best")
         self.epoch_seconds = state.get("epoch_seconds", [])
+        restore_rng_state(state.get("rng"))
         self._restore_phase2(state)
         self._restore_cursor(state, path)
+
+    @staticmethod
+    def _scheduler_state(state):
+        """Neutralize the saved lr_lambdas before restoring the scheduler.
+
+        `LambdaLR.state_dict` serializes the `__dict__` of callable lambda
+        objects; restoring it would overwrite the freshly built schedule
+        (total_steps, phase2_start_step, ...) with the checkpoint's values.
+        That silently breaks the documented "raise train.epochs and resume"
+        flow, freezing the LR at the old schedule's tail. Only `last_epoch`
+        and friends should be restored.
+        """
+        if isinstance(state, dict) and "lr_lambdas" in state:
+            state = dict(state)
+            state["lr_lambdas"] = [None] * len(state["lr_lambdas"])
+        return state
 
     def _restore_cursor(self, state, path):
         """Set the resume point from the checkpoint's in-epoch cursor.
@@ -459,11 +606,25 @@ class Trainer:
             self.phase2["selector"].load_state_dict(state["selector"])
 
     def load_weights(self, path):
-        """Warm start the model from a saved weight file."""
+        """Warm start the model from a saved weight file.
+
+        The load is non-strict (the cluster head may have a different K), but
+        never silent: mismatched keys are logged, and a file that matches
+        nothing at all raises instead of pretending the warm start worked.
+        """
         state = torch.load(path, map_location=self.step.device,
-                           weights_only=False)
+                           weights_only=True)
         weights = state.get("model", state)
-        self.model.load_state_dict(weights, strict=False)
+        missing, unexpected = self.model.load_state_dict(weights, strict=False)
+        if len(missing) == len(self.model.state_dict()):
+            raise ValueError(
+                f"no weight in {path} matches the model; wrong file?")
+        if missing:
+            _LOGGER.warning("Warm start: {} model keys not found in {} "
+                            "(first: {})", len(missing), path, missing[0])
+        if unexpected:
+            _LOGGER.warning("Warm start: {} file keys unused (first: {})",
+                            len(unexpected), unexpected[0])
         _LOGGER.info("Loaded start weights from {}", path)
 
     # ----- the epoch loop -----

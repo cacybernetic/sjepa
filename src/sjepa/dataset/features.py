@@ -21,10 +21,15 @@ class MfccExtractor:
                  n_mels=23):
         self.hop = hop
         self.dim = n_mfcc * 3
+        # center=False aligns MFCC frame t with the CNN frontend frame t: both
+        # then cover samples [t*hop, t*hop + n_fft). The torchaudio default
+        # (center=True) centers frame t at t*hop, half a frame earlier than
+        # the encoder, so every soft target was shifted by ~12.5 ms.
         self.transform = torchaudio.transforms.MFCC(
             sample_rate=sample_rate,
             n_mfcc=n_mfcc,
-            melkwargs={"n_fft": n_fft, "hop_length": hop, "n_mels": n_mels},
+            melkwargs={"n_fft": n_fft, "hop_length": hop, "n_mels": n_mels,
+                       "center": False},
         )
 
     def to(self, device):

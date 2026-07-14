@@ -19,6 +19,27 @@ from .dataset.audio import AudioLoader
 from .dataset.features import MfccExtractor
 from .dataset.readers import ArchiveReader
 from .gmm import DiagonalGMM, GMMFitter, OnlineGMM, ReservoirSampler
+from .modules.masking import build_padding_mask
+
+
+def _real_frames(features, batch):
+    """Keep only the frames of real audio, dropping the padded tail.
+
+    Args:
+        features: tensor (B, T, D) of per-frame features.
+        batch: the collated batch dict carrying `frame_lengths`.
+
+    Returns:
+        A (M, D) tensor of the frames that belong to real audio. Padded
+        frames are digital silence: fitting or seeding a GMM on them wastes
+        components on padding and biases the mixture weights.
+    """
+    lengths = batch.get("frame_lengths")
+    if lengths is None:
+        return features.reshape(-1, features.shape[-1])
+    keep = build_padding_mask(features.shape[0], features.shape[1], lengths,
+                              features.device)
+    return features[keep]
 
 
 def _frames_bar(total_frames, desc):
@@ -68,7 +89,7 @@ class Phase1GmmProvider:
 
     def load(self, path, device):
         """Load a saved GMM from a .pt file."""
-        state = torch.load(path, map_location=device, weights_only=False)
+        state = torch.load(path, map_location=device, weights_only=True)
         _LOGGER.info("Loaded Phase 1 GMM from {}", path)
         return DiagonalGMM.from_state_dict(state, device=device)
 
@@ -94,7 +115,7 @@ class Phase1GmmProvider:
             if batch is None or reservoir.filled >= self.config.fit_frames:
                 break
             waveform = batch["waveform"].squeeze(1).to(device)
-            features = extractor.extract(waveform).reshape(-1, self.extractor.dim)
+            features = _real_frames(extractor.extract(waveform), batch)
             reservoir.add(features.cpu())
             bar.n = min(reservoir.filled, self.config.fit_frames)
             bar.refresh()
@@ -136,8 +157,13 @@ class OnlineGmmSeeder:
             if batch is None or reservoir.filled >= self.config.fit_frames:
                 break
             waveform = batch["waveform"].to(device)
-            feats = ema_encoder.extract_layer(waveform, layer)
-            reservoir.add(feats.reshape(-1, dim))
+            frames = waveform.shape[-1] // 320
+            padding = build_padding_mask(waveform.shape[0], frames,
+                                         batch["frame_lengths"], device)
+            feats = ema_encoder.extract_layer(waveform, layer,
+                                              padding_mask=padding)
+            keep = padding[:, :feats.shape[1]]
+            reservoir.add(feats[keep])
             bar.n = min(reservoir.filled, self.config.fit_frames)
             bar.refresh()
             if reservoir.filled >= self.config.fit_frames:

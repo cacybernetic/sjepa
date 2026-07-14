@@ -63,9 +63,14 @@ class DenoiseAugmentor:
         return self.p_noise > 0.0 or self.p_mix > 0.0
 
     def _remember(self, batch):
-        """Keep a few clips from the batch to use as future noise."""
+        """Keep a few clips from the batch to use as future noise.
+
+        Clips stay on the batch device: round-tripping them through the CPU
+        stalled the pipeline twice per batch for no benefit (the buffer is a
+        few dozen megabytes at most).
+        """
         for index in range(batch.shape[0]):
-            clip = batch[index].detach().cpu().clone()
+            clip = batch[index].detach().clone()
             if len(self.buffer) >= self.buffer_size:
                 self.buffer.pop(0)
             self.buffer.append(clip)

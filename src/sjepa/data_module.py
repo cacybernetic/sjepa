@@ -34,10 +34,11 @@ def _cap(samples, limit):
 class DataModule:
     """Create the three data loaders from one config."""
 
-    def __init__(self, config, hop=320):
+    def __init__(self, config, hop=320, pin_memory=False):
         self.cfg = config
         self.data_cfg = config.dataset
         self.collator = WaveformCollator(hop=hop)
+        self.pin_memory = pin_memory
         self._val_indices = None
 
     def _hdf5_dataset(self, path):
@@ -69,33 +70,50 @@ class DataModule:
         return self._raw_dataset(self.data_cfg.test_path,
                                  self.data_cfg.max_test_samples)
 
-    def _val_subset(self, test_dataset):
-        """Pick a `val_prob` fraction of the test dataset for validation."""
+    def _split_test(self, test_dataset):
+        """Split the test dataset into a validation part and a held-out part.
+
+        The best checkpoint is selected on the validation metrics; if the final
+        evaluation reuses those same clips, the reported test score is biased
+        by the selection. With `val_disjoint` (the default) the two subsets do
+        not overlap. The old behaviour (evaluate on the full test set, val
+        included) stays available with `val_disjoint: false`.
+        """
         total = len(test_dataset)
         keep = max(1, int(total * self.data_cfg.val_prob))
         generator = torch.Generator().manual_seed(self.cfg.seed)
         order = torch.randperm(total, generator=generator).tolist()
         self._val_indices = sorted(order[:keep])
-        return Subset(test_dataset, self._val_indices)
+        val_dataset = Subset(test_dataset, self._val_indices)
+        if not self.data_cfg.val_disjoint:
+            return val_dataset, test_dataset
+        if keep >= total:
+            _LOGGER.warning("val_prob={} leaves no held-out test clip; the "
+                            "final evaluation will reuse the validation set",
+                            self.data_cfg.val_prob)
+            return val_dataset, test_dataset
+        held_out = Subset(test_dataset, sorted(order[keep:]))
+        return val_dataset, held_out
 
     def _loader(self, dataset, shuffle):
         """Wrap a dataset in a resumable DataLoader for in-epoch checkpointing."""
         return ResumableDataLoader(
             dataset, batch_size=self.cfg.train.batch_size, shuffle=shuffle,
             seed=self.cfg.seed, num_workers=self.data_cfg.num_workers,
-            collate_fn=self.collator, pin_memory=False, drop_last=False)
+            collate_fn=self.collator, pin_memory=self.pin_memory,
+            drop_last=False)
 
     def build(self):
         """Return a dict with the train, val, and test loaders and sizes."""
         train_dataset = self._train_dataset()
         test_dataset = self._test_dataset()
-        val_dataset = self._val_subset(test_dataset)
+        val_dataset, held_out = self._split_test(test_dataset)
         _LOGGER.info("Data sizes: train={} val={} test={}",
-                     len(train_dataset), len(val_dataset), len(test_dataset))
+                     len(train_dataset), len(val_dataset), len(held_out))
         return {
             "train": self._loader(train_dataset, True),
             "val": self._loader(val_dataset, False),
-            "test": self._loader(test_dataset, False),
+            "test": self._loader(held_out, False),
             "sizes": {"train": len(train_dataset), "val": len(val_dataset),
-                      "test": len(test_dataset)},
+                      "test": len(held_out)},
         }

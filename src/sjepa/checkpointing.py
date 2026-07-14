@@ -31,6 +31,23 @@ _LOGGER = get_logger()
 _CKPT_RE = re.compile(r"ckpt_e(\d+)_s(\d+)_n(\d+)\.pth")
 
 
+def _atomic_save(payload, path):
+    """Write with torch.save to a temp file, then rename atomically.
+
+    A crash in the middle of `torch.save` straight to the final path leaves a
+    truncated file that the next resume would pick as "latest" and fail on.
+    `os.replace` is atomic on POSIX, so the final name only ever points to a
+    complete file.
+    """
+    tmp_path = f"{path}.tmp"
+    try:
+        torch.save(payload, tmp_path)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 def _seq_of(name):
     """Return the save sequence number in a checkpoint file name, or None."""
     match = _CKPT_RE.fullmatch(name)
@@ -96,7 +113,7 @@ class CheckpointManager:
         if seq is None:
             seq = int(payload.get("ckpt_seq", 0))
         path = self._path(epoch, global_step, seq)
-        torch.save(payload, path)
+        _atomic_save(payload, path)
         _LOGGER.info("Saved checkpoint to {}", path)
         self._rotate()
         return path
@@ -108,16 +125,26 @@ class CheckpointManager:
             return None
         return os.path.join(self.dir, entries[-1][1])
 
+    def paths_newest_first(self):
+        """Return every checkpoint path, newest first (resume fallback order)."""
+        return [os.path.join(self.dir, name)
+                for _, name in reversed(self._entries())]
+
     def has_checkpoint(self):
         """Return True when at least one checkpoint exists on disk."""
         return bool(self._entries())
 
     @staticmethod
     def load(path, map_location="cpu"):
-        """Read a checkpoint payload from disk."""
+        """Read a checkpoint payload from disk.
+
+        `weights_only=True`: the payload holds only tensors, containers, and
+        primitives, and the restricted unpickler cannot execute code from a
+        tampered file.
+        """
         if not os.path.exists(path):
             raise FileNotFoundError(f"checkpoint not found: {path}")
-        return torch.load(path, map_location=map_location, weights_only=False)
+        return torch.load(path, map_location=map_location, weights_only=True)
 
 
 class WeightSaver:
@@ -137,7 +164,7 @@ class WeightSaver:
         if extra:
             payload.update(extra)
         path = self._path(name)
-        torch.save(payload, path)
+        _atomic_save(payload, path)
         _LOGGER.info("Saved weights to {}", path)
         return path
 
@@ -146,4 +173,4 @@ class WeightSaver:
         path = self._path(name)
         if not os.path.exists(path):
             raise FileNotFoundError(f"weights not found: {path}")
-        return torch.load(path, map_location=map_location, weights_only=False)
+        return torch.load(path, map_location=map_location, weights_only=True)

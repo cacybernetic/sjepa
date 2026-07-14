@@ -76,9 +76,13 @@ def test_phase2_builder_accumulates_then_updates():
     waveform = torch.randn(2, 1, 1600)
     builder.build(waveform, accumulate=True)
     builder.build(waveform, accumulate=True)
-    assert len(builder._feat_buffer) == 2
+    assert builder._stats is not None
+    # Two micro-batches of 2 clips x 5 frames each: 20 frames counted total.
+    assert abs(float(builder._stats[0].sum()) - 20.0) < 1e-3
+    old_means = builder.gmm.means.clone()
     builder.post_step()
-    assert builder._feat_buffer == [] and builder._resp_buffer == []
+    assert builder._stats is None and builder._sample == []
+    assert not torch.allclose(builder.gmm.means, old_means)
 
 
 def test_phase2_builder_no_leak_during_validation():
@@ -86,7 +90,20 @@ def test_phase2_builder_no_leak_during_validation():
     dim = 6
     builder = Phase2TargetBuilder(_FakeEma(dim), _toy_online_gmm(dim), layer=0)
     builder.build(torch.randn(2, 1, 1600), accumulate=False)
-    assert builder._feat_buffer == []
+    assert builder._stats is None and builder._sample == []
+
+
+def test_phase2_builder_excludes_padding_from_stats():
+    """Padded frames never enter the accumulated GMM statistics."""
+    dim = 6
+    builder = Phase2TargetBuilder(_FakeEma(dim, frames=5),
+                                  _toy_online_gmm(dim), layer=0)
+    waveform = torch.randn(2, 1, 1600)
+    padding = torch.zeros(2, 5, dtype=torch.bool)
+    padding[0, :3] = True  # only 3 real frames in the whole batch
+    targets = builder.build(waveform, padding_mask=padding, accumulate=True)
+    assert targets.shape == (2, 5, 4)  # full shape kept for the loss
+    assert abs(float(builder._stats[0].sum()) - 3.0) < 1e-3
 
 
 # ----- layer selector: lazy init + decoupled decay -----
@@ -192,6 +209,10 @@ class _FakeTrainer:
         self.targets = "phase1-targets"
         self.phase2 = None
         self.augmentor = object()
+
+        class _Best:
+            best = 1.23
+        self.best = _Best()
 
         class _Step:
             objective = JEPAObjective(use_visible_loss=True)

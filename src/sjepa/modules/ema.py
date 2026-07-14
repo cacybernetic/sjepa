@@ -69,11 +69,22 @@ class EmaEncoder(nn.Module):
         ema_params = list(self.encoder.parameters())
         online_params = list(online_encoder.parameters())
         # Fused in-place update: ema = alpha * ema + (1 - alpha) * online.
-        torch._foreach_mul_(ema_params, alpha)
-        torch._foreach_add_(ema_params, online_params, alpha=1.0 - alpha)
+        # torch._foreach_* is a private API; fall back to a plain loop if a
+        # future torch release drops it.
+        try:
+            torch._foreach_mul_(ema_params, alpha)
+            torch._foreach_add_(ema_params, online_params, alpha=1.0 - alpha)
+        except AttributeError:
+            for ema_param, online_param in zip(ema_params, online_params):
+                ema_param.mul_(alpha).add_(online_param, alpha=1.0 - alpha)
         return alpha
 
     @torch.no_grad()
     def extract_layer(self, waveform, layer_index, padding_mask=None):
         """Return clean features at one layer from the slow encoder."""
         return self.encoder.extract_layer(waveform, layer_index, padding_mask)
+
+    @torch.no_grad()
+    def extract_all_layers(self, waveform, padding_mask=None):
+        """Return clean features of every layer from one forward pass."""
+        return self.encoder.extract_all_layers(waveform, padding_mask)

@@ -25,7 +25,8 @@ import math
 import torch
 
 # Small floor for variances. It keeps the log and the division stable.
-_VAR_FLOOR = 1e-4
+# The paper clamps at 1e-6; a higher floor flattens the posteriors.
+_VAR_FLOOR = 1e-6
 # Default chunk sizes for the chunked soft assignment (bounds peak memory).
 _CHUNK_N = 4096
 _CHUNK_K = 512
@@ -147,21 +148,45 @@ class ReservoirSampler:
         self.seen = 0
         self.filled = 0
 
+    @torch.no_grad()
     def add(self, features):
-        """Add a block of rows (shape (M, D)) to the reservoir."""
-        for row in features:
-            self._add_one(row)
+        """Add a block of rows (shape (M, D)) to the reservoir.
 
-    def _add_one(self, row):
-        """Add a single row, replacing a random slot once the buffer is full."""
-        if self.filled < self.capacity:
-            self.buffer[self.filled] = row
-            self.filled += 1
-        else:
-            index = int(torch.randint(0, self.seen + 1, (1,)).item())
-            if index < self.capacity:
-                self.buffer[index] = row
-        self.seen += 1
+        The whole block is processed with tensor operations (no per-row Python
+        loop, no per-row host/device sync). Row i of the block, arriving as the
+        (seen + i + 1)-th stream element, replaces a uniformly random slot with
+        probability capacity / (seen + i + 1), exactly like the sequential
+        Vitter algorithm; when several accepted rows target the same slot, the
+        latest one wins, which matches sequential processing.
+        """
+        features = features.reshape(-1, features.shape[-1])
+        num = features.shape[0]
+        if num == 0:
+            return
+        take = min(self.capacity - self.filled, num)
+        if take > 0:
+            self.buffer[self.filled:self.filled + take] = \
+                features[:take].to(self.buffer.device)
+            self.filled += take
+            self.seen += take
+            features = features[take:]
+            num -= take
+        if num == 0:
+            return
+        sizes = torch.arange(1, num + 1, device=features.device) + self.seen
+        slots = (torch.rand(num, device=features.device) * sizes).long()
+        accept = slots < self.capacity
+        if bool(accept.any()):
+            rows = features[accept].to(self.buffer.device)
+            chosen = slots[accept].to(self.buffer.device)
+            order = torch.arange(chosen.shape[0], device=self.buffer.device)
+            last = torch.full((self.capacity,), -1, dtype=torch.long,
+                              device=self.buffer.device)
+            last.scatter_reduce_(0, chosen, order, reduce="amax",
+                                 include_self=True)
+            winners = last[last >= 0]
+            self.buffer[chosen[winners]] = rows[winners]
+        self.seen += num
 
     def collected(self):
         """Return the rows kept so far, shape (filled, D)."""
@@ -289,13 +314,24 @@ class OnlineGMM(DiagonalGMM):
         self.decay = decay
 
     @staticmethod
-    def _batch_stats(features, resp):
-        """Return (means, variances, weights) from one batch of frames."""
-        counts = resp.sum(dim=0).clamp(min=1e-8)
-        means = (resp.t() @ features) / counts.unsqueeze(1)
-        diff = features.unsqueeze(1) - means.unsqueeze(0)
-        weighted = resp.unsqueeze(2) * diff * diff
-        variances = (weighted.sum(dim=0) / counts.unsqueeze(1)).clamp(
+    def sufficient_stats(features, resp):
+        """Return (counts, sum_x, sum_x2) for one batch of frames.
+
+        Only (K,) and (K, D) sums are kept, so no (N, K, D) tensor is ever
+        materialized (the naive per-pair difference would need hundreds of
+        gigabytes at K=500, D=768). Same closed form as `GMMFitter._em_step`.
+        """
+        counts = resp.sum(dim=0)
+        sum_x = resp.t() @ features
+        sum_x2 = resp.t() @ (features * features)
+        return counts, sum_x, sum_x2
+
+    @staticmethod
+    def _stats_to_params(counts, sum_x, sum_x2):
+        """Turn sufficient statistics into (means, variances, weights)."""
+        counts = counts.clamp(min=1e-8)
+        means = sum_x / counts.unsqueeze(1)
+        variances = (sum_x2 / counts.unsqueeze(1) - means * means).clamp(
             min=_VAR_FLOOR)
         weights = counts / counts.sum()
         return means, variances, weights
@@ -332,6 +368,33 @@ class OnlineGMM(DiagonalGMM):
         return num_dead
 
     @torch.no_grad()
+    def _blend(self, means, variances, weights):
+        """Blend one batch estimate into the parameters with the EMA decay."""
+        alpha = self.decay
+        self.means = alpha * self.means + (1.0 - alpha) * means
+        self.variances = (alpha * self.variances
+                          + (1.0 - alpha) * variances).clamp(min=_VAR_FLOOR)
+        self.weights = alpha * self.weights + (1.0 - alpha) * weights
+        self.weights = self.weights / self.weights.sum()
+        self._refresh_log_weights()
+
+    @torch.no_grad()
+    def update_from_stats(self, counts, sum_x, sum_x2, sample=None):
+        """Update from precomputed sufficient statistics.
+
+        Args:
+            counts: (K,) responsibility sums accumulated over the window.
+            sum_x: (K, D) responsibility-weighted feature sums.
+            sum_x2: (K, D) responsibility-weighted squared-feature sums.
+            sample: optional (M, D) frame sample used to re-seed dead
+                components. When None, dead components are left as they are.
+        """
+        means, variances, weights = self._stats_to_params(counts, sum_x, sum_x2)
+        self._blend(means, variances, weights)
+        if sample is not None and sample.shape[0] > 0:
+            self._reseed_dead(sample.float())
+
+    @torch.no_grad()
     def update(self, features, resp):
         """Blend batch statistics into the parameters with the EMA decay.
 
@@ -341,15 +404,8 @@ class OnlineGMM(DiagonalGMM):
         """
         features = features.float()
         resp = resp.float()
-        means, variances, weights = self._batch_stats(features, resp)
-        alpha = self.decay
-        self.means = alpha * self.means + (1.0 - alpha) * means
-        self.variances = (alpha * self.variances
-                          + (1.0 - alpha) * variances).clamp(min=_VAR_FLOOR)
-        self.weights = alpha * self.weights + (1.0 - alpha) * weights
-        self.weights = self.weights / self.weights.sum()
-        self._refresh_log_weights()
-        self._reseed_dead(features)
+        counts, sum_x, sum_x2 = self.sufficient_stats(features, resp)
+        self.update_from_stats(counts, sum_x, sum_x2, sample=features)
 
     @classmethod
     def from_gmm(cls, gmm, decay=0.999):

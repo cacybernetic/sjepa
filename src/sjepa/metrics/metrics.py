@@ -33,8 +33,12 @@ class _SelectionMetric:
 
     @staticmethod
     def _count(selection):
-        """Return how many frames are selected in the batch."""
-        return int(selection.sum())
+        """Return how many frames are selected, as a 0-dim tensor.
+
+        Kept on the device: converting to int here would sync the host on
+        every batch. The meter accumulates tensors and syncs at read time.
+        """
+        return selection.sum()
 
     def compute(self):
         """Return the average value over the whole pass."""

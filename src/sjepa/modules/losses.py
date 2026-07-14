@@ -35,10 +35,18 @@ class KLDivergenceLoss(nn.Module):
         num_clusters = logits.shape[-1]
         flat_selection = selection.reshape(-1)
         if not bool(flat_selection.any()):
-            return logits.sum() * 0.0
+            # A detached zero, NOT `logits.sum() * 0.0`: if any logit is
+            # non-finite (e.g. a fully padded row through the attention), that
+            # expression would turn the whole loss into NaN and destroy the
+            # weights on backward. `requires_grad=True` keeps backward legal
+            # when this is the only loss term.
+            return torch.zeros((), device=logits.device, dtype=torch.float32,
+                               requires_grad=True)
+        # The KL is computed in float32 even when the model forward ran in
+        # bf16 autocast: log_softmax over K classes is cheap and sensitive.
         log_pred = F.log_softmax(
-            logits.reshape(-1, num_clusters)[flat_selection], dim=-1)
-        target = targets.reshape(-1, num_clusters)[flat_selection]
+            logits.reshape(-1, num_clusters)[flat_selection].float(), dim=-1)
+        target = targets.reshape(-1, num_clusters)[flat_selection].float()
         return F.kl_div(log_pred, target, reduction="batchmean")
 
 

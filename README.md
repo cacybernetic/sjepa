@@ -481,7 +481,8 @@ gmm:
 init_weights: runs/sjepa_base/train/weights/best.pt
 ```
 
-A ready single-run example lives in `cpu/configs/train_twophase.yaml`.
+A ready single-run example lives in `cpu/configs/train.yaml` (the default CPU
+config runs the full Phase 1 -> Phase 2 trajectory at demo scale).
 
 #### Reading the training curves
 
@@ -531,8 +532,7 @@ stored under the `<stage>_avg_<metric>` convention: `train_avg_*` (training),
 
 | File                       | Used by      | Key fields                                            |
 |----------------------------|--------------|-------------------------------------------------------|
-| `cpu/configs/train.yaml`   | `trainsjepa` | `dataset`, `model.size`, `train`, `optimizer`, `gmm`  |
-| `cpu/configs/train_twophase.yaml` | `trainsjepa` | single-run Phase 1 -> Phase 2 demo (`phase2_start_epoch`) |
+| `cpu/configs/train.yaml`   | `trainsjepa` | single-run Phase 1 -> Phase 2 demo (`dataset`, `model.size`, `train`, `phase2_start_epoch`, `gmm`) |
 | `cpu/configs/hdf5.yaml`    | `buildh5ds`  | `dataset.train_path`, `dataset.train_h5`, `augment`   |
 | `cpu/configs/eval.yaml`    | `evalsjepa`  | `init_weights`, `dataset.test_path`, `gmm.num_clusters` |
 | `cpu/configs/export.yaml`  | `exportw` / `runinfer` | `init_weights`, `onnx_path`, `audio`      |

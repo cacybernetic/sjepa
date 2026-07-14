@@ -15,6 +15,8 @@ The metrics fit a self-supervised model with soft targets:
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn.functional as F
 
@@ -28,13 +30,17 @@ def _select(values, selection):
 
 
 def kl_divergence(logits, targets, selection):
-    """Return the mean KL(target || softmax(logits)) over selected frames."""
+    """Return the mean KL(target || softmax(logits)) over selected frames.
+
+    Returns a 0-dim tensor (or 0.0 when nothing is selected) so callers can
+    accumulate without forcing a host/device sync on every batch.
+    """
     chosen_logits = _select(logits, selection)
     chosen_targets = _select(targets, selection)
     if chosen_logits.shape[0] == 0:
         return 0.0
-    log_pred = F.log_softmax(chosen_logits, dim=-1)
-    return float(F.kl_div(log_pred, chosen_targets, reduction="batchmean"))
+    log_pred = F.log_softmax(chosen_logits.float(), dim=-1)
+    return F.kl_div(log_pred, chosen_targets.float(), reduction="batchmean")
 
 
 def top1_agreement(logits, targets, selection):
@@ -45,7 +51,7 @@ def top1_agreement(logits, targets, selection):
         return 0.0
     pred = chosen_logits.argmax(dim=-1)
     gold = chosen_targets.argmax(dim=-1)
-    return float((pred == gold).float().mean())
+    return (pred == gold).float().mean()
 
 
 def predictor_entropy_bits(logits, selection):
@@ -53,10 +59,10 @@ def predictor_entropy_bits(logits, selection):
     chosen = _select(logits, selection)
     if chosen.shape[0] == 0:
         return 0.0
-    log_prob = F.log_softmax(chosen, dim=-1)
+    log_prob = F.log_softmax(chosen.float(), dim=-1)
     prob = log_prob.exp()
     entropy_nats = -(prob * log_prob).sum(dim=-1)
-    return float((entropy_nats / torch.log(torch.tensor(2.0))).mean())
+    return entropy_nats.mean() / math.log(2.0)
 
 
 def effective_rank(features, max_rows=2000):

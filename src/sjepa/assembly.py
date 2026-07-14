@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import os
+import random
 
 import torch
 
@@ -57,8 +58,19 @@ class PipelineBuilder:
         self.device = resolve_device(config.device)
 
     def _seed(self):
-        """Set the random seed for repeatable runs."""
+        """Seed every RNG stream used in training, not only torch.
+
+        The augmentor and the audio random crop draw from Python's `random`,
+        and third-party pieces may draw from numpy; leaving them unseeded made
+        runs unrepeatable even with a fixed torch seed.
+        """
         torch.manual_seed(self.cfg.seed)
+        random.seed(self.cfg.seed)
+        try:
+            import numpy
+            numpy.random.seed(self.cfg.seed % (2 ** 32))
+        except ImportError:
+            pass
 
     def _required_frames(self):
         """Return how many frames the longest allowed clip can produce.
@@ -173,7 +185,8 @@ class PipelineBuilder:
         scheduler = build_scheduler(optimizer, self.cfg.scheduler.kind,
                                     self.cfg.scheduler.warmup_steps, total,
                                     self.cfg.scheduler.min_ratio,
-                                    self._phase2_start_step(steps_per_epoch))
+                                    self._phase2_start_step(steps_per_epoch),
+                                    self.cfg.scheduler.phase2_lr_ratio)
         return optimizer, scheduler
 
     def _phase2_start_step(self, steps_per_epoch):
@@ -209,12 +222,25 @@ class PipelineBuilder:
                               self.cfg.train.masked_only_epoch,
                               self.cfg.gmm.num_clusters_phase2)
 
+    def _autocast_dtype(self):
+        """Map the configured precision to an autocast dtype (or None)."""
+        precision = (self.cfg.train.precision or "fp32").lower()
+        if precision in ("fp32", "float32", "off"):
+            return None
+        if precision in ("bf16", "bfloat16"):
+            if self.device != "cuda":
+                _LOGGER.warning("precision=bf16 asked on CPU; keeping fp32")
+                return None
+            return torch.bfloat16
+        raise ValueError(f"unknown precision '{precision}' (fp32 or bf16)")
+
     def _build_step(self, model):
         """Build the per-batch forward step and the loss objective."""
         objective = build_objective(self.cfg.train.use_visible_loss)
         masker = MaskBuilder(self.cfg.masking.mask_ratio,
                              self.cfg.masking.mask_length)
-        return ForwardStep(model, objective, masker, self.hop, self.device)
+        return ForwardStep(model, objective, masker, self.hop, self.device,
+                           autocast_dtype=self._autocast_dtype())
 
     def _build_io(self):
         """Build the checkpoint manager, weight saver, history, and plotter."""
@@ -226,11 +252,20 @@ class PipelineBuilder:
         return ckpt, weights, history, plotter
 
     def _resume_or_init(self, trainer):
-        """Load a checkpoint if present, else warm start from weights."""
-        latest = trainer.ckpt.latest_path()
-        if self.cfg.checkpoint.resume and latest is not None:
-            trainer.load_checkpoint(latest)
-            return
+        """Load a checkpoint if present, else warm start from weights.
+
+        Checkpoints are tried newest first: if the latest file is unreadable
+        (e.g. the crash happened while it was written by an older, non-atomic
+        version), the run falls back to the previous one instead of dying.
+        """
+        if self.cfg.checkpoint.resume:
+            for path in trainer.ckpt.paths_newest_first():
+                try:
+                    trainer.load_checkpoint(path)
+                    return
+                except (RuntimeError, EOFError, KeyError, OSError) as exc:
+                    _LOGGER.warning("Checkpoint {} unreadable ({}); trying the "
+                                    "previous one", path, exc)
         if self.cfg.init_weights and os.path.exists(self.cfg.init_weights):
             trainer.load_weights(self.cfg.init_weights)
 
@@ -238,7 +273,8 @@ class PipelineBuilder:
         """Build and return a ready `Trainer`."""
         self._seed()
         model = self._build_model()
-        loaders = DataModule(self.cfg, self.hop).build()
+        loaders = DataModule(self.cfg, self.hop,
+                             pin_memory=(self.device == "cuda")).build()
         targets, phase2 = self._build_targets(model, loaders)
         optimizer, scheduler = self._build_optim(model, loaders)
         step = self._build_step(model)

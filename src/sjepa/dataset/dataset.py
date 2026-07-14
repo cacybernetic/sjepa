@@ -82,8 +82,14 @@ class WaveformCollator:
         return _round_up(longest, self.hop)
 
     def __call__(self, batch):
-        """Collate a batch into a dict, dropping items that failed to load."""
-        items = [item for item in batch if item is not None]
+        """Collate a batch into a dict, dropping items that failed to load.
+
+        Items shorter than one frame hop are dropped too: they would get a
+        frame length of zero, i.e. an all-padding row whose attention softmax
+        over fully masked keys produces NaN.
+        """
+        items = [item for item in batch
+                 if item is not None and item[0].shape[-1] >= self.hop]
         if not items:
             return None
         waveforms, indices = zip(*items)

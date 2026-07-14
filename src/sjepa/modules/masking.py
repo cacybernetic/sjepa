@@ -82,17 +82,20 @@ class BlockMaskGenerator:
     def generate(self, batch_size, num_frames, frame_lengths, device):
         """Build the block mask for a whole batch.
 
+        The mask is built on the CPU and moved to the device in one transfer:
+        the span loop reads back masked counts, and doing that on a CUDA
+        tensor would force hundreds of host/device syncs per batch.
+
         Args:
             batch_size: the number of utterances.
             num_frames: the padded length in frames.
             frame_lengths: real length per utterance in frames.
-            device: the device where the mask is built.
+            device: the device where the mask is returned.
 
         Returns:
             A bool tensor of shape (batch_size, num_frames). True means masked.
         """
-        mask = torch.zeros(batch_size, num_frames, dtype=torch.bool,
-                           device=device)
+        mask = torch.zeros(batch_size, num_frames, dtype=torch.bool)
         for index in range(batch_size):
             self._mask_one(mask[index], int(frame_lengths[index]))
-        return mask
+        return mask.to(device)
