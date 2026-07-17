@@ -77,11 +77,23 @@ class DiagonalGMM:
         return self
 
     def _log_prob_block(self, features, k_start, k_end):
-        """Return log N for a block of K components, shape (N, k_end-k_start)."""
+        """Return log N for a block of K components, shape (N, k_end-k_start).
+
+        The squared Mahalanobis distance is expanded into three matmuls
+        (x^2 . 1/var - 2 x . mu/var + mu^2 . 1/var) so only (N, K) blocks are
+        ever materialized. The per-pair difference tensor would be (N, K, D):
+        at the default chunk sizes with K=500 and D=768 that is ~6 GiB, an OOM
+        on small GPUs. The clamp removes tiny negative values left by the
+        cancellation in the expansion (the exact distance is >= 0).
+        """
         means = self.means[k_start:k_end]
         variances = self.variances[k_start:k_end]
-        diff = features.unsqueeze(1) - means.unsqueeze(0)
-        mahalanobis = (diff * diff / variances.unsqueeze(0)).sum(dim=2)
+        inv_var = 1.0 / variances
+        mahalanobis = (
+            (features * features) @ inv_var.t()
+            - 2.0 * (features @ (means * inv_var).t())
+            + (means * means * inv_var).sum(dim=1)
+        ).clamp(min=0.0)
         log_det = variances.log().sum(dim=1)
         const = self.dim * math.log(2.0 * math.pi)
         return -0.5 * (const + log_det.unsqueeze(0) + mahalanobis)

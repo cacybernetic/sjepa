@@ -25,6 +25,33 @@ def test_posteriors_sum_to_one():
     assert torch.allclose(sums, torch.ones_like(sums), atol=1e-4)
 
 
+def test_log_prob_block_matches_naive_difference():
+    """The matmul expansion must equal the per-pair difference computation.
+
+    `_log_prob_block` expands the Mahalanobis distance into matmuls to avoid
+    an (N, K, D) tensor (a multi-GiB OOM at K=500, D=768 on small GPUs); this
+    pins the expansion to the naive reference on random parameters.
+    """
+    torch.manual_seed(0)
+    num, num_k, dim = 64, 7, 12
+    means = torch.randn(num_k, dim) * 3.0
+    variances = torch.rand(num_k, dim) + 0.1
+    weights = torch.softmax(torch.randn(num_k), dim=0)
+    gmm = DiagonalGMM(means, variances, weights)
+    features = torch.randn(num, dim) * 2.0
+
+    block = gmm._log_prob_block(features, 0, num_k)
+
+    import math
+    diff = features.unsqueeze(1) - gmm.means.unsqueeze(0)
+    mahalanobis = (diff * diff / gmm.variances.unsqueeze(0)).sum(dim=2)
+    log_det = gmm.variances.log().sum(dim=1)
+    const = dim * math.log(2.0 * math.pi)
+    naive = -0.5 * (const + log_det.unsqueeze(0) + mahalanobis)
+
+    assert torch.allclose(block, naive, atol=1e-4)
+
+
 def test_fitter_separates_clusters():
     """Two far clusters should get near-hard, opposite assignments."""
     data = _two_clusters(gap=10.0)
